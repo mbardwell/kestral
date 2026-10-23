@@ -1,0 +1,2330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A fill-in-the-code game that teaches embedded C++ patterns (RAII, CRTP, dependency injection and all 23 GoF patterns) from primary sources.">
+<style>body{margin:0}</style>
+<title>Kestrel-1 Flight Software</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: ground-station console. Left rail = spacecraft + subsystem board; main = the active work order; bottom = reference shelf. Single deliberate night-ops theme. */
+:root {
+  color-scheme: dark;
+  --void: #0e1322;
+  --panel: #161d31;
+  --panel-2: #1c2540;
+  --line: #2b3657;
+  --ink: #e7eaf3;
+  --dim: #929cbd;
+  --amber: #ffb547;
+  --amber-ink: #241500;
+  --cyan: #7bd4e4;
+  --ok: #62d897;
+  --bad: #ff7a7a;
+  --kw: #c9a6ff;
+  --ty: #7bd4e4;
+  --num: #ffb547;
+  --com: #6f7a9c;
+  --str: #a8e6a1;
+  --f-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --f-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--void); color: var(--ink); }
+body {
+  font: 16px/1.55 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+a { color: var(--cyan); }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; }
+
+.wrap { max-width: 1240px; margin: 0 auto; }
+
+/* HUD */
+header.hud {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px;
+  padding-block: 18px 14px; border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.brand h1 {
+  margin: 0; font-family: var(--f-display); font-weight: 800; font-size: clamp(30px, 5vw, 44px);
+  letter-spacing: .02em; line-height: 1; text-transform: uppercase;
+}
+.brand h1 span { color: var(--amber); }
+.brand small { color: var(--dim); font-family: var(--f-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+.meters { display: flex; gap: 10px; flex-wrap: wrap; }
+.meter {
+  min-width: 96px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+  display: grid; gap: 2px;
+}
+.meter b { font-family: var(--f-mono); font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.meter span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
+.meter.window { min-width: 150px; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 4px; }
+.bar i { display: block; height: 100%; width: 100%; background: var(--cyan); transition: width .9s linear; }
+
+/* Grid */
+.console { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 24px; padding-top: 22px; align-items: start; }
+@media (max-width: 860px) { .console { grid-template-columns: minmax(0, 1fr); } }
+
+aside.rail { display: grid; gap: 16px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+@media (max-width: 860px) { aside.rail { position: static; order: 2; } }
+.pip.done.here { outline: 2px solid var(--amber); outline-offset: 1px; color: var(--void); }
+.scope { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.scope canvas { display: block; width: 100%; height: 190px; }
+.scope .cap { display: flex; justify-content: space-between; padding: 8px 12px; border-top: 1px solid var(--line); font-family: var(--f-mono); font-size: 11px; color: var(--dim); letter-spacing: .05em; }
+.scope .cap b { color: var(--ink); font-weight: 600; }
+
+.subsys { display: grid; gap: 10px; }
+.sub {
+  text-align: left; width: 100%; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; display: grid; gap: 6px;
+}
+.sub:hover { border-color: var(--dim); }
+.sub[aria-current="true"] { border-color: var(--amber); box-shadow: inset 3px 0 0 var(--amber); }
+.sub .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sub .name { font-family: var(--f-display); font-weight: 800; font-size: 22px; letter-spacing: .03em; text-transform: uppercase; line-height: 1; }
+.sub .code { font-family: var(--f-mono); font-size: 11px; color: var(--dim); }
+.sub .what { font-size: 13px; color: var(--dim); }
+.pips { display: flex; flex-wrap: wrap; gap: 6px; }
+.exnote { padding: 10px 14px; border-top: 1px solid var(--line); background: var(--panel); font-size: 14.5px; }
+.exnote code { font-family: var(--f-mono); font-size: .88em; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.pip {
+  width: 30px; height: 26px; border-radius: 4px; border: 1px solid var(--line); background: var(--void);
+  font-family: var(--f-mono); font-size: 11px; color: var(--dim); display: grid; place-items: center; padding: 0;
+}
+.pip.done { background: var(--ok); color: var(--void); border-color: var(--ok); font-weight: 600; }
+.pip.here { border-color: var(--amber); color: var(--amber); }
+.pip:disabled { opacity: .45; cursor: not-allowed; }
+.status-lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.status-lamp.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.railbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+.ghost:hover { color: var(--ink); border-color: var(--dim); }
+
+/* Work order */
+main.order { min-width: 0; display: grid; gap: 18px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--amber); }
+.order h2 { margin: 2px 0 0; font-family: var(--f-display); font-weight: 800; font-size: clamp(30px, 4.4vw, 46px); line-height: 1; letter-spacing: .01em; text-wrap: balance; }
+.mission { font-size: 17px; max-width: 68ch; margin: 0; }
+.brief {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 14px 16px; display: grid; gap: 10px; max-width: 80ch;
+}
+.brief h3 { margin: 0; font-size: 12px; font-family: var(--f-mono); color: var(--cyan); letter-spacing: .1em; text-transform: uppercase; font-weight: 600; }
+.brief p { margin: 0; color: var(--ink); }
+.brief code, .debrief code, .mcq code, .shelf code { font-family: var(--f-mono); font-size: .88em; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.cites { display: flex; flex-wrap: wrap; gap: 6px; }
+.cite {
+  font-family: var(--f-mono); font-size: 11.5px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 10px; text-decoration: none;
+}
+.cite:hover { border-color: var(--cyan); color: var(--cyan); }
+.fsm { display: flex; flex-wrap: wrap; gap: 6px 10px; font-family: var(--f-mono); font-size: 12.5px; }
+.fsm span { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; }
+.fsm em { color: var(--amber); font-style: normal; }
+
+/* Code */
+.ide { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #0b1020; }
+.ide .tab { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-family: var(--f-mono); font-size: 12px; color: var(--dim); background: var(--panel); }
+.ide .tab b { color: var(--ink); font-weight: 600; }
+.codewrap { overflow-x: auto; }
+pre.code { margin: 0; padding: 14px 0; font-family: var(--f-mono); font-size: 13.5px; line-height: 1.75; color: var(--ink); min-width: max-content; }
+.ln { display: block; padding-right: 18px; white-space: pre; }
+.ln::before { content: attr(data-n); display: inline-block; width: 3.2em; padding-right: 1.2em; text-align: right; color: #45507a; user-select: none; }
+.ln.err { background: rgba(255, 122, 122, .09); }
+.ln.err::before { color: var(--bad); }
+.t-kw { color: var(--kw); } .t-ty { color: var(--ty); } .t-num { color: var(--num); } .t-com { color: var(--com); font-style: italic; } .t-str { color: var(--str); }
+input.blank {
+  font: inherit; color: var(--amber); background: rgba(255, 181, 71, .08); border: 0; border-bottom: 2px dashed var(--amber);
+  border-radius: 3px 3px 0 0; padding: 0 4px; margin: 0 1px; min-width: 4ch; outline: none;
+}
+input.blank:focus { background: rgba(255, 181, 71, .18); border-bottom-style: solid; }
+input.blank.ok { color: var(--ok); border-bottom: 2px solid var(--ok); background: rgba(98, 216, 151, .1); }
+input.blank.bad { color: var(--bad); border-bottom: 2px solid var(--bad); background: rgba(255, 122, 122, .1); animation: shake .3s; }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.primary {
+  background: var(--amber); color: var(--amber-ink); border: 0; border-radius: 6px; padding: 10px 18px;
+  font-family: var(--f-display); font-weight: 800; font-size: 20px; letter-spacing: .05em; text-transform: uppercase; line-height: 1;
+}
+.primary:hover { filter: brightness(1.08); }
+.primary:disabled { opacity: .5; cursor: default; }
+.secondary { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 9px 14px; font-size: 14px; }
+.secondary:hover { border-color: var(--dim); }
+.kbd { font-family: var(--f-mono); font-size: 11px; color: var(--dim); }
+
+.log {
+  font-family: var(--f-mono); font-size: 12.5px; line-height: 1.6; background: #0b1020; border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px 14px; min-height: 64px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--dim);
+}
+.log .ok { color: var(--ok); } .log .bad { color: var(--bad); } .log .cmd { color: var(--ink); } .log .hint { color: var(--amber); } .log .tlm { color: var(--cyan); }
+
+.debrief { border: 1px solid var(--ok); border-radius: 8px; padding: 14px 16px; background: rgba(98, 216, 151, .06); display: grid; gap: 8px; max-width: 80ch; }
+.debrief h3 { margin: 0; font-family: var(--f-display); font-size: 24px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; color: var(--ok); }
+.debrief p { margin: 0; }
+.debrief .pts { font-family: var(--f-mono); font-size: 13px; color: var(--dim); }
+
+/* MCQ */
+.mcq { display: grid; gap: 10px; max-width: 80ch; }
+.mcq .q { font-size: 17px; font-weight: 700; margin: 0; }
+.opt {
+  text-align: left; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: start; font-size: 15px;
+}
+.opt:hover:not(:disabled) { border-color: var(--amber); }
+.opt .k { font-family: var(--f-mono); color: var(--amber); font-weight: 600; }
+.opt.right { border-color: var(--ok); background: rgba(98, 216, 151, .08); }
+.opt.wrong { border-color: var(--bad); background: rgba(255, 122, 122, .07); }
+.opt:disabled { cursor: default; }
+.opt .why { grid-column: 2; font-size: 14px; color: var(--dim); }
+
+/* Shelf */
+section.shelf { margin-top: 48px; border-top: 1px solid var(--line); padding-top: 26px; }
+.shelf h2 { margin: 0 0 4px; font-family: var(--f-display); font-weight: 800; font-size: 34px; text-transform: uppercase; letter-spacing: .02em; }
+.shelf > p { color: var(--dim); max-width: 72ch; margin: 0 0 18px; }
+.shelfgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 960px) { .shelfgrid { grid-template-columns: minmax(0, 1fr); } }
+.shelfcol { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; align-content: start; }
+.shelfcol h3 { margin: 0; font-family: var(--f-display); font-weight: 800; font-size: 24px; text-transform: uppercase; letter-spacing: .03em; }
+.ref { display: grid; gap: 3px; padding-top: 12px; border-top: 1px solid var(--line); scroll-margin-top: 24px; }
+.ref:target, .ref.flash { outline: 2px solid var(--cyan); outline-offset: 6px; border-radius: 2px; }
+.ref .who { font-size: 14.5px; }
+.ref .who i { color: var(--ink); }
+.ref .where { font-family: var(--f-mono); font-size: 12px; color: var(--amber); }
+.ref .role { font-size: 13.5px; color: var(--dim); }
+.ref a { font-size: 13px; word-break: break-word; }
+
+/* Finale */
+.finale { position: fixed; inset: 0; background: rgba(8, 11, 20, .88); display: grid; place-items: center; z-index: 20; padding: 16px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.finale .card { max-width: 520px; width: 100%; background: var(--panel); border: 1px solid var(--amber); border-radius: 10px; padding: 26px; display: grid; gap: 12px; text-align: center; }
+.finale h2 { margin: 0; font-family: var(--f-display); font-weight: 800; font-size: 48px; line-height: 1; color: var(--amber); text-transform: uppercase; }
+.finale .score { font-family: var(--f-mono); font-size: 34px; font-variant-numeric: tabular-nums; }
+.finale .rank { font-family: var(--f-display); font-size: 28px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--cyan); }
+.finale p { margin: 0; color: var(--dim); }
+.finale .actions { justify-content: center; }
+
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ok); color: var(--void); font-weight: 700; padding: 8px 16px; border-radius: 999px; z-index: 30; font-family: var(--f-mono); font-size: 14px; }
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="hud">
+    <div class="brand">
+      <h1>Kestrel-1 <span>Flight Software</span></h1>
+      <small>Embedded C++ patterns · bring-up campaign</small>
+    </div>
+    <div class="meters" aria-live="polite">
+      <div class="meter"><span>Score</span><b id="mScore">0</b></div>
+      <div class="meter"><span>Streak</span><b id="mStreak">×1.0</b></div>
+      <div class="meter window"><span>Pass window bonus</span><b id="mWindow">+240</b><div class="bar"><i id="mBar"></i></div></div>
+    </div>
+  </header>
+
+  <div class="console">
+    <aside class="rail">
+      <div class="scope">
+        <canvas id="orbit" aria-label="Kestrel-1 in orbit. Each subsystem you complete adds hardware to the spacecraft."></canvas>
+        <div class="cap"><span>KESTREL-1 · LEO 520 km</span><span>MODE <b id="capMode">BOOT</b></span></div>
+      </div>
+      <div class="subsys" id="subsys"></div>
+      <div class="railbtns">
+        <button class="ghost" id="btnShelf">Reference shelf</button>
+        <button class="ghost" id="btnReset">Reset campaign</button>
+      </div>
+      <div id="resetConfirm" hidden class="brief" style="padding:10px 12px">
+        <p style="font-size:14px">Wipe all progress and score?</p>
+        <div class="actions"><button class="secondary" id="resetYes">Yes, reset</button><button class="ghost" id="resetNo">Cancel</button></div>
+      </div>
+    </aside>
+
+    <main class="order" id="order"></main>
+  </div>
+
+  <section class="shelf" id="shelf">
+    <h2>Reference shelf</h2>
+    <p>Every pattern in this game is taught from primary sources: the people who named or specified each technique, the ISO C++ standard and its performance report, the original pattern catalogues, and, where they genuinely apply, NASA and ESA flight-software standards. Vendor APIs in the snippets (Arm CMSIS-Core, FreeRTOS, STM32 HAL) are just the hardware layer the patterns sit on.</p>
+    <div class="shelfgrid" id="shelfgrid"></div>
+  </section>
+</div>
+
+<div class="finale" id="finale" hidden>
+  <div class="card">
+    <div class="eyebrow">Acquisition of signal</div>
+    <h2>Kestrel-1 is talking</h2>
+    <p>All seven subsystems are flying on your code.</p>
+    <div class="score" id="fScore">0</div>
+    <div class="rank" id="fRank">—</div>
+    <p id="fNote"></p>
+    <div class="actions"><button class="primary" id="fClose">Back to console</button><button class="secondary" id="fReplay">Fly it again</button></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* ---------- Primary references ---------- */
+const REFS = {
+  dne1994: {
+    p: 'raii',
+    who: 'Stroustrup, B. <i>The Design and Evolution of C++</i>. Addison-Wesley, 1994. ISBN 0-201-54330-3.',
+    where: '§16.5 “Resource Management”, pp. 388–389',
+    role: 'Where Stroustrup describes the technique and gives it its name: “resource acquisition is initialization”.',
+    short: 'Stroustrup 1994 §16.5'
+  },
+  iso: {
+    p: 'raii',
+    who: 'ISO/IEC 14882, <i>Programming Languages — C++</i> (the C++ standard).',
+    where: '[stmt.jump] · [class.temporary] · [thread.req.lockable.basic] · [thread.lock.guard]',
+    role: 'The language guarantees RAII rests on: automatic objects are destroyed on any exit from their scope; temporaries die at the end of the full-expression; what std::lock_guard needs from a mutex type.',
+    url: 'https://eel.is/c++draft/stmt.jump', urlLabel: 'eel.is/c++draft (working draft)',
+    short: 'ISO C++ [stmt.jump]'
+  },
+  cg: {
+    p: 'raii',
+    who: 'Stroustrup, B. &amp; Sutter, H. (eds.) <i>C++ Core Guidelines</i>.',
+    where: 'R.1 · CP.20',
+    role: 'R.1: manage resources automatically using resource handles and RAII. CP.20: use RAII, never plain lock()/unlock().',
+    url: 'https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rr-raii', urlLabel: 'isocpp.github.io/CppCoreGuidelines',
+    short: 'Core Guidelines R.1 / CP.20'
+  },
+  coplien1995: {
+    p: 'crtp',
+    who: 'Coplien, J. O. “Curiously Recurring Template Patterns.” <i>C++ Report</i>, February 1995, pp. 24–27.',
+    where: 'Whole article',
+    role: 'The paper that named the pattern after observing it recur independently across codebases.',
+    short: 'Coplien 1995'
+  },
+  tr18015: {
+    p: 'crtp',
+    who: 'ISO/IEC TR 18015:2006, <i>Technical Report on C++ Performance</i>.',
+    where: '§2.3.3 Virtual Functions · §2.5.2 Templates vs. Inheritance · §4.1 ROMability',
+    role: 'WG21’s own measurements of what C++ features cost on embedded targets: virtual calls cost about as much as calls through a function pointer, and unused virtual functions can’t be stripped by the linker.',
+    url: 'https://www.iso.org/standard/43351.html', urlLabel: 'iso.org/standard/43351',
+    short: 'ISO TR 18015 (C++ performance)'
+  },
+  isocast: {
+    p: 'crtp',
+    who: 'ISO/IEC 14882, <i>Programming Languages — C++</i>.',
+    where: '[expr.static.cast]',
+    role: 'Defines the base-to-derived static_cast that CRTP depends on, and makes it undefined behaviour when the object isn’t really of the derived type.',
+    url: 'https://eel.is/c++draft/expr.static.cast', urlLabel: 'eel.is/c++draft/expr.static.cast',
+    short: 'ISO C++ [expr.static.cast]'
+  },
+  gof1994: {
+    p: 'state',
+    who: 'Gamma, E., Helm, R., Johnson, R. &amp; Vlissides, J. <i>Design Patterns: Elements of Reusable Object-Oriented Software</i>. Addison-Wesley, 1994. ISBN 0-201-63361-2.',
+    where: 'State, pp. 305ff.',
+    role: 'The catalogue entry for State: intent, the Context / State / ConcreteState roles, and the trade-offs.',
+    short: 'GoF 1994, State p. 305'
+  },
+  harel1987: {
+    p: 'state',
+    who: 'Harel, D. “Statecharts: A visual formalism for complex systems.” <i>Science of Computer Programming</i> 8(3), 1987, pp. 231–274.',
+    where: 'Whole paper',
+    role: 'Introduces statecharts: state machines extended with hierarchy (depth), orthogonality and broadcast communication.',
+    url: 'https://doi.org/10.1016/0167-6423(87)90035-9', urlLabel: 'doi.org/10.1016/0167-6423(87)90035-9',
+    short: 'Harel 1987'
+  },
+  samek2008: {
+    p: 'state',
+    who: 'Samek, M. <i>Practical UML Statecharts in C/C++: Event-Driven Programming for Embedded Systems</i>, 2nd ed. Newnes, 2008. ISBN 978-0-7506-8706-5.',
+    where: 'Standard state machine implementation techniques: nested switch, state table, State pattern',
+    role: 'The embedded practitioner’s primary text, by the author of the QP real-time frameworks. Compares each implementation technique on code size, RAM and speed.',
+    url: 'https://state-machine.com/psicc2/', urlLabel: 'state-machine.com/psicc2',
+    short: 'Samek 2008'
+  },
+  fowler2004: {
+    p: 'di',
+    who: 'Fowler, M. “Inversion of Control Containers and the Dependency Injection pattern.” martinfowler.com, January 2004.',
+    where: 'Constructor injection · setter injection · interface injection',
+    role: 'The article that named dependency injection and compared its forms with the Service Locator alternative.',
+    url: 'https://martinfowler.com/articles/injection.html', urlLabel: 'martinfowler.com/articles/injection.html',
+    short: 'Fowler 2004'
+  },
+  alexandrescu2001: {
+    p: 'di',
+    who: 'Alexandrescu, A. <i>Modern C++ Design: Generic Programming and Design Patterns Applied</i>. Addison-Wesley, 2001. ISBN 0-201-70431-5.',
+    where: 'Ch. 1, Policy-Based Class Design',
+    role: 'Introduces policy classes: a class template takes the behaviours it depends on as template parameters. Injection at compile time, with no virtual calls.',
+    short: 'Alexandrescu 2001 ch. 1'
+  },
+  gofCre: {
+    p: 'cre',
+    who: 'Gamma, E., Helm, R., Johnson, R. &amp; Vlissides, J. <i>Design Patterns: Elements of Reusable Object-Oriented Software</i>. Addison-Wesley, 1994. ISBN 0-201-63361-2.',
+    where: 'Creational: Abstract Factory p. 87 · Builder p. 97 · Factory Method p. 107 · Prototype p. 117 · Singleton p. 127',
+    role: 'The catalogue entries: intent, participants and consequences. The intents shown in the game are paraphrased.',
+    short: 'GoF creational'
+  },
+  cgDesign: {
+    p: 'cre',
+    who: 'Stroustrup, B. &amp; Sutter, H. (eds.) <i>C++ Core Guidelines</i>.',
+    where: 'I.3 · C.35',
+    role: 'I.3: avoid singletons. C.35: a base class destructor should be either public and virtual, or protected and non-virtual, which is why the interfaces in this game have protected destructors.',
+    url: 'https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri-singleton', urlLabel: 'isocpp.github.io/CppCoreGuidelines',
+    short: 'Core Guidelines I.3 / C.35'
+  },
+  jsf2005: {
+    p: 'cre',
+    who: 'Lockheed Martin. <i>Joint Strike Fighter Air Vehicle C++ Coding Standards</i>, Doc. 2RDU00001 Rev C, December 2005.',
+    where: 'AV Rule 206',
+    role: 'No allocation or deallocation on the heap after initialization. An early safety-critical C++ standard; Stroustrup hosts a copy.',
+    url: 'https://www.stroustrup.com/JSF-AV-rules.pdf', urlLabel: 'stroustrup.com/JSF-AV-rules.pdf',
+    short: 'JSF AV Rule 206'
+  },
+  gofStr: {
+    p: 'str',
+    who: 'Gamma, E., Helm, R., Johnson, R. &amp; Vlissides, J. <i>Design Patterns</i>. Addison-Wesley, 1994.',
+    where: 'Structural: Adapter p. 139 · Bridge p. 151 · Composite p. 163 · Decorator p. 175 · Facade p. 185 · Flyweight p. 195 · Proxy p. 207',
+    role: 'The catalogue entries for the seven structural patterns. Intents in the game are paraphrased.',
+    short: 'GoF structural'
+  },
+  gofBeh: {
+    p: 'beh',
+    who: 'Gamma, E., Helm, R., Johnson, R. &amp; Vlissides, J. <i>Design Patterns</i>. Addison-Wesley, 1994.',
+    where: 'Behavioral: Chain of Responsibility p. 223 · Command p. 233 · Interpreter p. 243 · Iterator p. 257 · Mediator p. 273 · Memento p. 283 · Observer p. 293 · State p. 305 · Strategy p. 315 · Template Method p. 325 · Visitor p. 331',
+    role: 'The catalogue entries for the eleven behavioral patterns. State is taught in the ADCS subsystem. Intents in the game are paraphrased.',
+    short: 'GoF behavioral'
+  },
+  isoLib: {
+    p: 'beh',
+    who: 'ISO/IEC 14882, <i>Programming Languages — C++</i>.',
+    where: '[stmt.dcl] · [stmt.ranged] · [variant.visit]',
+    role: 'Thread-safe initialization of function-local statics (Singleton); what a range-based for calls (Iterator); std::visit (Visitor).',
+    url: 'https://eel.is/c++draft/stmt.ranged', urlLabel: 'eel.is/c++draft',
+    short: 'ISO C++ standard'
+  },
+  holzmann2006: {
+    p: 'space',
+    who: 'Holzmann, G. J. (NASA Jet Propulsion Laboratory). “The Power of 10: Rules for Developing Safety-Critical Code.” <i>IEEE Computer</i> 39(6), June 2006, pp. 95–99.',
+    where: 'Rule 2 fixed loop bounds · Rule 3 no heap after initialization · Rule 9 no function pointers',
+    role: 'JPL’s rules for flight code. They were written for C, so the game points out where they press on a C++ pattern rather than treating them as C++ rules.',
+    url: 'https://doi.org/10.1109/MC.2006.212', urlLabel: 'doi.org/10.1109/MC.2006.212',
+    short: 'NASA JPL Power of 10'
+  },
+  fprime: {
+    p: 'space',
+    who: 'NASA Jet Propulsion Laboratory. <i>F´ (F Prime) flight software framework</i>. Open source, C++.',
+    where: 'Components · typed ports · topologies',
+    role: 'JPL’s C++ flight framework, flown on the Ingenuity Mars Helicopter. Components talk only through typed ports and a topology file wires them together: dependency injection at the architecture level.',
+    url: 'https://fprime.jpl.nasa.gov/', urlLabel: 'fprime.jpl.nasa.gov',
+    short: 'NASA JPL F´'
+  },
+  ecss7041: {
+    p: 'space',
+    who: 'ECSS-E-ST-70-41C, <i>Space engineering — Telemetry and telecommand packet utilization</i>. ESA / ECSS, 15 April 2016.',
+    where: 'ST[01] request verification · ST[03] housekeeping · ST[08] function management · ST[11] time-based scheduling · ST[12] on-board monitoring · ST[19] event-action',
+    role: 'ESA’s Packet Utilisation Standard (PUS): the standard on-board services that several behavioral and creational levels implement.',
+    url: 'https://ecss.nl/wp-content/uploads/2016/06/ECSS-E-ST-70-41C15April2016.pdf', urlLabel: 'ecss.nl (PDF)',
+    short: 'ESA ECSS-E-ST-70-41C'
+  },
+  bssc2000: {
+    p: 'space',
+    who: 'ESA Board for Software Standardisation and Control. <i>C and C++ Coding Standards</i>, BSSC(2000)1, Issue 1, 30 March 2000.',
+    where: 'Whole document',
+    role: 'ESA’s own C and C++ coding standard. Listed for further reading; no level cites a specific rule from it.',
+    url: 'https://everyspec.com/ESA/BSSC_2000-1_I1_2000_29384/', urlLabel: 'everyspec.com (catalogue entry)',
+    short: 'ESA BSSC(2000)1'
+  }
+};
+
+const PATTERNS = [
+  { id: 'raii', name: 'RAII', code: 'EPS / BUS', what: 'Power & bus safety: guards that always release.',
+    blurb: 'Resource Acquisition Is Initialization: tie a resource to an object’s lifetime. Acquire in the constructor, release in the destructor, and the language releases it on every path out of the scope.' },
+  { id: 'crtp', name: 'CRTP', code: 'HAL', what: 'Drivers: shared interfaces, zero vtables.',
+    blurb: 'Curiously Recurring Template Pattern: a class derives from a template instantiated with itself, <code>class X : Base&lt;X&gt;</code>. The base calls into the derived class at compile time, so there is no vtable and no indirect call.' },
+  { id: 'state', name: 'State', code: 'ADCS', what: 'GoF behavioral, in depth: the State pattern four ways.',
+    blurb: 'State machines: a component’s reaction to an event depends on its mode. Make the modes and transitions explicit instead of scattering flags. GoF intent: “Allow an object to alter its behavior when its internal state changes.”' },
+  { id: 'di', name: 'DI', code: 'BSP / TEST', what: 'Dependency injection: hand parts in, don’t reach for globals.',
+    blurb: 'Dependency injection: an object is given the things it depends on, through its constructor or a template parameter, instead of creating them or reaching for globals. Fowler named it in 2004. On a microcontroller it is what lets the same controller code run on the flight board and on a host test bench. NASA JPL’s F´ framework builds flight software this way: components see only their ports, and a topology wires them together.' },
+  { id: 'cre', name: 'Creational', code: 'BOOT', what: 'GoF creational: how objects get made, mostly without the heap.',
+    blurb: 'The five GoF creational patterns decide who creates objects and how. In flight code “create” rarely means <code>new</code> at run time: NASA JPL’s Power of 10 (rule 3) and the JSF AV C++ rules (AV Rule 206) both forbid heap allocation after initialization, so objects are static, pooled, or created once at boot.' },
+  { id: 'str', name: 'Structural', code: 'BUS / PAYLOAD', what: 'GoF structural: how drivers and subsystems fit together.',
+    blurb: 'The seven GoF structural patterns compose classes and objects into larger structures: wrapping a vendor driver, separating an abstraction from its bus, building trees of power loads.' },
+  { id: 'beh', name: 'Behavioral', code: 'OPS', what: 'GoF behavioral: who handles what, and when.',
+    blurb: 'The GoF behavioral patterns assign responsibilities between objects. Several map directly onto ESA’s Packet Utilisation Standard (ECSS-E-ST-70-41C): telecommand routing, time-tagged schedules, on-board monitoring, event-action. State, the eleventh, follows next as its own four-level category (ADCS).' }
+];
+const GOF_REF = { cre: 'gofCre', str: 'gofStr', beh: 'gofBeh' };
+/* Display order: C++ idioms first, then the four GoF categories in series. */
+const ORDER = ['raii', 'crtp', 'di', 'cre', 'str', 'beh', 'state'];
+PATTERNS.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+
+/* ---------- Levels ----------
+   Code placeholders are written ⟦id⟧. Answers are compared with all whitespace removed. */
+const LEVELS = [
+  /* ===== RAII ===== */
+  {
+    id: 'r1', p: 'raii', kind: 'code', file: 'eps/telemetry_ring.cpp',
+    title: 'Critical section guard',
+    mission: 'The telemetry ring buffer is written from the main loop and drained by the UART interrupt. On the last pass a frame came down torn. Wrap the push in a guard that masks interrupts and restores the previous mask on every way out.',
+    brief: '<p>Save <code>PRIMASK</code> in the constructor, restore it in the destructor. Restoring, instead of calling <code>__enable_irq()</code>, keeps nested guards correct: an inner guard must not re-enable interrupts an outer guard disabled. A copied guard would restore the mask twice, so copying is switched off.</p>',
+    refs: ['dne1994', 'iso', 'cg'],
+    code:
+`// CMSIS-Core intrinsics: __get_PRIMASK, __set_PRIMASK, __disable_irq
+class CriticalSection {
+public:
+    CriticalSection() : saved_(__get_PRIMASK()) {
+        __disable_irq();
+    }
+    ⟦b1⟧() {
+        __set_PRIMASK(⟦b2⟧);   // restore, don't blindly enable
+    }
+    CriticalSection(const CriticalSection&) = ⟦b3⟧;
+    CriticalSection& operator=(const CriticalSection&) = delete;
+private:
+    uint32_t saved_;
+};
+
+void TelemetryRing::push(uint8_t byte) {
+    CriticalSection guard;        // IRQs masked from here...
+    buf_[head_] = byte;
+    head_ = (head_ + 1) % kSize;
+}                                 // ...to here: ~CriticalSection runs`,
+    blanks: {
+      b1: { a: ['~CriticalSection'], err: 'expected a destructor declaration here', hint: 'The destructor is the class name with a ~ in front.' },
+      b2: { a: ['saved_', 'this->saved_'], err: 'restoring the wrong value: use what the constructor saved', hint: 'The member that was initialised from __get_PRIMASK().' },
+      b3: { a: ['delete'], err: 'a guard must not be copyable', hint: 'The C++11 way to remove a special member function: = ____;' }
+    },
+    tlm: 'EPS> ring push atomic · 0 torn frames in 10,000',
+    debrief: 'The closing brace is now your “interrupts back on” line. The standard ([stmt.jump]) destroys automatic objects on exit from a scope however it happens, so a <code>return</code> someone adds next year can’t leave IRQs masked.'
+  },
+  {
+    id: 'r2', p: 'raii', kind: 'code', file: 'eps/baro_spi.cpp',
+    title: 'Chip-select that can’t stick',
+    mission: 'The barometer shares SPI1 with the flash chip. After a timeout, chip-select stayed low and the next flash write went into the barometer. The early <code>return</code> on timeout is the line that did it.',
+    brief: '<p>CS is <strong>active-low</strong>. <code>Gpio</code> has <code>high()</code> and <code>low()</code>. Build a guard that selects the device on construction and deselects it on destruction, then use it so every return path deselects.</p>',
+    refs: ['dne1994', 'cg', 'iso'],
+    code:
+`class ChipSelect {
+public:
+    explicit ChipSelect(Gpio& cs) : cs_(cs) { cs_.⟦b1⟧(); }
+    ~ChipSelect()                            { cs_.⟦b2⟧(); }
+    ChipSelect(const ChipSelect&) = delete;
+private:
+    Gpio& cs_;
+};
+
+uint16_t Baro::readPressure() {
+    ⟦b3⟧ sel{csPin_};                   // device selected
+    spi_.transfer(kRegPress | kReadBit);
+    if (spi_.timedOut()) return kInvalid;  // early exit: still deselected
+    return spi_.transfer16(0x0000);
+}`,
+    blanks: {
+      b1: { a: ['low'], err: 'CS is active-low: selecting means driving it low', hint: 'Active-low: which level selects the chip?' },
+      b2: { a: ['high'], err: 'deselect by returning CS to its idle level', hint: 'The opposite of what the constructor does.' },
+      b3: { a: ['ChipSelect', 'constChipSelect'], err: 'declare a named ChipSelect object: its lifetime is the select window', hint: 'The type of the guard you just wrote.' }
+    },
+    tlm: 'EPS> SPI1 CS released on 3/3 exit paths · flash writes clean',
+    debrief: 'This build uses <code>-fno-exceptions</code>, and RAII still earns its keep: destructors run on every <code>return</code>, not only on <code>throw</code>. That’s Core Guidelines R.1: manage resources automatically using resource handles and RAII.'
+  },
+  {
+    id: 'r3', p: 'raii', kind: 'code', file: 'eps/i2c_bus_lock.cpp',
+    title: 'Shared I²C bus, standard guard',
+    mission: 'The IMU task and the magnetometer task fight over I2C1. Wrap a statically allocated FreeRTOS mutex so the standard <code>std::lock_guard</code> can hold it. No hand-written unlock calls anywhere.',
+    brief: '<p><code>std::lock_guard&lt;M&gt;</code> accepts any type that meets the <em>BasicLockable</em> requirements: public member functions named <code>lock()</code> and <code>unlock()</code> ([thread.req.lockable.basic]). Static allocation keeps the heap out of flight code.</p>',
+    refs: ['iso', 'cg', 'dne1994'],
+    code:
+`#include <mutex>   // only for std::lock_guard, a plain class template
+
+class RtosMutex {
+public:
+    RtosMutex() : h_(xSemaphoreCreateMutexStatic(&storage_)) {}
+    void ⟦b1⟧()   { xSemaphoreTake(h_, portMAX_DELAY); }
+    void ⟦b2⟧() { xSemaphoreGive(h_); }
+private:
+    StaticSemaphore_t storage_;
+    SemaphoreHandle_t h_;
+};
+
+RtosMutex i2c1Lock;
+
+bool Imu::readRates(Rates& out) {
+    std::lock_guard<⟦b3⟧> hold(i2c1Lock);
+    return bus_.read(kAddr, kRegGyro, &out, sizeof out);
+}`,
+    blanks: {
+      b1: { a: ['lock'], err: 'std::lock_guard calls m.lock() in its constructor', hint: 'BasicLockable needs two names. This is the acquiring one.' },
+      b2: { a: ['unlock'], err: 'std::lock_guard calls m.unlock() in its destructor', hint: 'The releasing one.' },
+      b3: { a: ['RtosMutex'], err: 'lock_guard’s template argument is the mutex type', hint: 'What type is i2c1Lock?' }
+    },
+    tlm: 'EPS> I2C1 arbitration clean · IMU + MAG interleaved, 0 NAKs',
+    debrief: 'This time you didn’t write a guard. You made your type fit the standard one. Core Guidelines CP.20: use RAII, never plain <code>lock()</code>/<code>unlock()</code>.'
+  },
+  {
+    id: 'r4', p: 'raii', kind: 'mcq', file: 'eps/adc_cal.cpp',
+    title: 'Fault injection: the vanishing guard',
+    mission: 'The ADC calibration offset is wrong on about 1 boot in 50. A logic analyser shows a timer ISR firing in the middle of the conversion. This line was added in code review:',
+    refs: ['iso', 'dne1994'],
+    code:
+`void Adc::calibrate() {
+    CriticalSection();        // added in review
+    startConversion();
+    waitForEoc();
+    offset_ = readResult();
+}`,
+    q: 'Why are interrupts still getting through?',
+    options: [
+      { t: '<code>calibrate()</code> has no <code>return</code> statement, so the destructor never runs.', ok: false, why: 'Falling off the end of a function exits the scope too; destructors run either way.' },
+      { t: '<code>CriticalSection();</code> creates an unnamed temporary. It is destroyed at the end of that statement, so the mask is restored before <code>startConversion()</code>.', ok: true, why: 'Right. Temporaries are destroyed at the end of the full-expression that creates them ([class.temporary]). Give the guard a name: <code>CriticalSection cs;</code>' },
+      { t: '<code>__disable_irq()</code> only masks interrupts in C code, not in C++.', ok: false, why: 'The intrinsic is the same instruction whichever language calls it.' },
+      { t: 'Deleting the copy constructor stops the guard from being constructed.', ok: false, why: 'Deleting copy doesn’t affect the default constructor; the code compiles and runs.' }
+    ],
+    tlm: 'EPS> ADC offset stable across 500 boots',
+    debrief: 'An RAII guard protects exactly the lifetime of its object. No name means no lifetime worth having. Some teams add <code>[[nodiscard]]</code> on the constructor (C++20) so compilers warn about this.'
+  },
+
+  /* ===== CRTP ===== */
+  {
+    id: 'c1', p: 'crtp', kind: 'code', file: 'hal/uart_base.hpp',
+    title: 'A driver without a vtable',
+    mission: 'Boot ROM is tight, and every driver used to carry a vtable pointer plus an indirect call per byte. Rewrite the UART base so <code>print()</code> calls the concrete <code>putChar()</code> directly.',
+    brief: '<p>The base gets its derived type as a template parameter. <code>self()</code> turns <code>*this</code> into a reference to that type. TR 18015 §2.3.3 measured virtual calls costing the same as calls through a function pointer, and more than direct calls. Here there is no indirect call at all, which also suits NASA JPL’s Power of 10: its rule 9 bans function pointers in C flight code.</p>',
+    refs: ['coplien1995', 'tr18015', 'isocast', 'holzmann2006'],
+    code:
+`template <typename Derived>
+class UartBase {
+public:
+    void print(const char* s) {
+        while (*s) self().putChar(*s++);
+    }
+private:
+    Derived& self() { return static_cast<⟦b1⟧>(*this); }
+};
+
+class Stm32Uart : public UartBase<⟦b2⟧> {
+public:
+    void putChar(char c) {
+        while (!(USART2->ISR & USART_ISR_TXE)) {}
+        USART2->TDR = c;
+    }
+};`,
+    blanks: {
+      b1: { a: ['Derived&'], err: 'invalid static_cast: convert *this to a reference to the derived type', hint: 'A reference to the template parameter.' },
+      b2: { a: ['Stm32Uart'], err: 'CRTP: the template argument is the class being defined', hint: 'The “curiously recurring” part: what class is this?' }
+    },
+    tlm: 'HAL> UART2 driver: no vtable · print() inlined into caller',
+    debrief: 'Coplien named this shape in 1995 after finding it recur independently in different codebases. Passing the class being defined as a template argument is legal because the base only needs the name until its member functions are actually used.'
+  },
+  {
+    id: 'c2', p: 'crtp', kind: 'code', file: 'hal/limited.hpp',
+    title: 'One counter per peripheral type',
+    mission: 'The DMA controller has 8 channels and the timer block has 4. Constructing a ninth <code>DmaChannel</code> should trip an assert, with no per-object cost and no hand-maintained globals.',
+    brief: '<p><code>Limited&lt;DmaChannel, 8&gt;</code> and <code>Limited&lt;TimerCh, 4&gt;</code> are different types, so each gets its own copy of every static member. CRTP gives you a separate counter per derived class for free.</p>',
+    refs: ['coplien1995', 'isocast'],
+    code:
+`template <typename T, std::size_t Max>
+class Limited {
+protected:
+    Limited()  { assert(++count_ <= Max); }
+    ~Limited() { --count_; }
+private:
+    ⟦b1⟧ inline std::size_t count_ = 0;   // one per T
+};
+
+class DmaChannel : public Limited<⟦b2⟧, 8> { /* ... */ };
+class TimerCh    : public Limited<TimerCh, 4>    { /* ... */ };`,
+    blanks: {
+      b1: { a: ['static'], err: 'count_ must be shared by all objects of one type, not stored per object', hint: 'One variable per class, not per object.' },
+      b2: { a: ['DmaChannel'], err: 'each peripheral type must pass itself, or it shares someone else’s counter', hint: 'Same trick as the UART: what class is this?' }
+    },
+    tlm: 'HAL> DMA channel 9 rejected at init · timers 4/4',
+    debrief: 'Counting instances per class is one of the classic CRTP uses. It works because every instantiation of a class template is a distinct class. A version for real flight code would also count in the copy constructor.'
+  },
+  {
+    id: 'c3', p: 'crtp', kind: 'code', file: 'hal/sensor.hpp',
+    title: 'Static interface for sensors',
+    mission: 'Every sensor converts raw counts to milli-units the same way. Put the conversion in one base. Each sensor supplies <code>raw()</code> and its scale as a compile-time constant. Then write one logging function that takes any sensor.',
+    brief: '<p>The base can read <code>D::kMilliPerLsb</code> inside a member function body because that body is only instantiated when called, by which point <code>D</code> is complete. The generic function takes the <em>base</em> type, so it accepts every CRTP sensor and nothing else.</p>',
+    refs: ['coplien1995', 'tr18015'],
+    code:
+`template <typename D>
+struct Sensor {
+    int32_t milli() { return self().raw() * D::kMilliPerLsb; }
+private:
+    D& self() { return static_cast<D&>(*this); }
+};
+
+struct Thermistor : Sensor<Thermistor> {
+    static ⟦b1⟧ int32_t kMilliPerLsb = 10;
+    int32_t raw() { return adcRead(kChTemp); }
+};
+
+template <typename D>
+int32_t logSample(⟦b2⟧ s) {
+    return s.milli();          // direct call, inlinable
+}`,
+    blanks: {
+      b1: { a: ['constexpr'], err: 'the scale should be a compile-time constant usable in the base', hint: 'The C++11 keyword for a compile-time constant (implicitly inline for static members since C++17).' },
+      b2: { a: ['Sensor<D>&'], err: 'take the CRTP base by reference so any sensor binds to it', hint: 'A reference to the base template instantiated with D.' }
+    },
+    tlm: 'HAL> 6 sensors · 1 log path · 0 indirect calls',
+    debrief: 'One <code>logSample</code>, a direct call per sensor type. TR 18015 §2.5.2 notes the cost on the other side: the linker can’t remove virtual functions because it can’t know which ones will be called at run time.'
+  },
+  {
+    id: 'c4', p: 'crtp', kind: 'mcq', file: 'hal/nrf_uart.hpp',
+    title: 'Fault injection: copy-paste driver',
+    mission: 'The radio board uses a Nordic nRF52 instead of an STM32. Someone copied the STM32 UART driver, renamed the class, and missed one spot. Before you diagnose it, read how the CRTP base finds its derived class, then work through the four examples.',
+    refs: ['isocast', 'coplien1995'],
+    brief: '<p>Inside <code>UartBase&lt;Derived&gt;</code>, the compiler knows only one thing about <code>*this</code>: it is a <code>UartBase&lt;Derived&gt;</code>. Writing <code>static_cast&lt;Derived&amp;&gt;(*this)</code> is your promise that the object is really a <code>Derived</code>. The compiler accepts that promise without checking it, because a base-to-derived <code>static_cast</code> is allowed whenever <code>Derived</code> inherits from that base ([expr.static.cast]). If the promise is false, the behaviour is undefined.</p><p>So the template argument has exactly one job: name the class that is inheriting. CRTP has no vtable to fall back on. Whatever type you name is the type whose functions get called.</p>',
+    examples: [
+      { label: 'Example 1 · correct', tag: 'compiles · works',
+        code:
+`class Stm32Uart : public UartBase<Stm32Uart> {   // names itself
+public:
+    void putChar(char c);
+};
+
+Stm32Uart console;
+console.print("hi");
+// print() -> self() -> static_cast<Stm32Uart&>(*this)
+// *this really is a Stm32Uart, so Stm32Uart::putChar runs.`,
+        note: 'The promise is true. The cast hands back the object you already had, now typed as <code>Stm32Uart</code>, and the call goes straight to its <code>putChar</code>.' },
+      { label: 'Example 2 · wrong argument, no data members', tag: 'compiles · undefined behaviour',
+        code:
+`class Nrf52Uart : public UartBase<Stm32Uart> {   // names someone else
+public:
+    void putChar(char c);      // print() never calls this
+};
+
+Nrf52Uart radioDbg;
+radioDbg.print("hi");
+// self() -> static_cast<Stm32Uart&>(*this), but *this is a Nrf52Uart.
+// print() calls Stm32Uart::putChar, which polls and writes USART2:
+// registers this chip doesn't have.`,
+        note: 'Nothing complains at build time. On the target, the writes go to an address that isn’t a UART on this chip. Nothing comes out of the debug port, or the core faults.' },
+      { label: 'Example 3 · wrong argument, with data members', tag: 'compiles · undefined behaviour',
+        code:
+`class Stm32Uart : public UartBase<Stm32Uart> {
+    USART_TypeDef* regs_;                         // pointer to registers
+public:
+    explicit Stm32Uart(USART_TypeDef* r) : regs_(r) {}
+    void putChar(char c) { regs_->TDR = c; }
+};
+
+class Nrf52Uart : public UartBase<Stm32Uart> {   // same mistake
+    uint8_t txPin_;                               // different layout
+public:
+    void putChar(char c);
+};
+// radioDbg.print("hi") runs Stm32Uart::putChar on a Nrf52Uart:
+// it reads regs_ from the bytes that hold txPin_ and whatever
+// follows, then writes through that garbage pointer.`,
+        note: 'With data members it gets worse: the wrong function reads fields at the wrong offsets. This is how a CRTP mistake usually shows up on hardware, as a HardFault inside <code>putChar</code> when the real mistake is one word in a class declaration.' },
+      { label: 'Example 4 · the guard', tag: 'compile error, which is what you want',
+        code:
+`template <typename Derived>
+class UartBase {
+public:
+    void print(const char* s) { while (*s) self().putChar(*s++); }
+private:
+    UartBase() = default;      // only Derived may construct the base
+    friend Derived;
+    Derived& self() { return static_cast<Derived&>(*this); }
+};
+
+class Nrf52Uart : public UartBase<Stm32Uart> { /* ... */ };
+Nrf52Uart radioDbg;
+// g++: error: use of deleted function 'Nrf52Uart::Nrf52Uart()'
+//      'UartBase<Stm32Uart>::UartBase()' is private within this context`,
+        note: 'The base constructor is private, and only the class named in the template argument is a friend. <code>Stm32Uart</code> can still construct its base; <code>Nrf52Uart</code> can’t, so the copy-paste mistake becomes a build error. The error text above is what g++ actually prints for this code. (<code>friend Derived;</code> with a template parameter is valid since C++11.)' }
+    ],
+    code:
+`class Nrf52Uart : public UartBase<Stm32Uart> {
+public:
+    void putChar(char c);
+};
+
+Nrf52Uart dbg;
+dbg.print("boot\\n");`,
+    q: 'This is the code that shipped, using the original UartBase without the guard. What happens?',
+    options: [
+      { t: 'Compile error: <code>Nrf52Uart</code> doesn’t match <code>Stm32Uart</code>.', ok: false, why: 'Nothing checks it. The base only uses Derived inside the static_cast.' },
+      { t: 'It compiles. <code>print()</code> casts the object to <code>Stm32Uart&amp;</code>, which it isn’t. That’s undefined behaviour, and in practice it writes to USART2 registers that don’t exist on this chip.', ok: true, why: 'Right. [expr.static.cast] allows the downcast, but the behaviour is undefined if the object isn’t actually of that type. A common hardening: make the base constructor private and add <code>friend Derived;</code>. Then the wrong argument fails to compile.' },
+      { t: 'Virtual dispatch picks <code>Nrf52Uart::putChar</code>, so it works.', ok: false, why: 'There is no virtual dispatch in CRTP. That’s the point of it.' },
+      { t: 'Linker error: duplicate <code>putChar</code>.', ok: false, why: 'Different classes, different member functions; the linker is happy.' }
+    ],
+    tlm: 'HAL> nRF52 UART bound to correct base · debug console up',
+    debrief: 'CRTP moves the check from run time to compile time only if you let the compiler see the mistake. The private-constructor-plus-friend guard makes the wrong template argument a build error.'
+  },
+
+  /* ===== STATE ===== */
+  {
+    id: 's1', p: 'state', kind: 'code', file: 'adcs/mode_switch.cpp',
+    title: 'Mode manager, switch edition',
+    mission: 'Turn the attitude-control mode diagram into code. After separation the satellite boots in SAFE.',
+    fsm: [['SAFE', 'BattOk', 'DETUMBLE'], ['DETUMBLE', 'RatesLow', 'NOMINAL'], ['DETUMBLE', 'BattLow', 'SAFE'], ['NOMINAL', 'BattLow', 'SAFE']],
+    brief: '<p>Samek calls this the <em>nested switch</em> technique: switch on the current state, then test the event. Any event a state doesn’t handle leaves it where it is.</p>',
+    refs: ['samek2008', 'harel1987'],
+    code:
+`enum class Mode : uint8_t { Safe, Detumble, Nominal };
+enum class Evt  : uint8_t { BattOk, RatesLow, BattLow };
+
+Mode next(Mode m, Evt e) {
+    switch (m) {
+    case Mode::Safe:
+        if (e == Evt::BattOk)   return Mode::⟦b1⟧;
+        break;
+    case Mode::Detumble:
+        if (e == Evt::RatesLow) return Mode::Nominal;
+        if (e == Evt::BattLow)  return Mode::Safe;
+        break;
+    case Mode::Nominal:
+        if (e == Evt::BattLow)  return Mode::⟦b2⟧;
+        break;
+    }
+    return ⟦b3⟧;   // event not handled: stay put
+}`,
+    blanks: {
+      b1: { a: ['Detumble'], err: 'SAFE + BattOk goes to DETUMBLE', hint: 'Check the diagram above the code.' },
+      b2: { a: ['Safe'], err: 'NOMINAL + BattLow drops back to SAFE', hint: 'Low battery always goes to the same mode.' },
+      b3: { a: ['m'], err: 'an unhandled event must not change the mode', hint: 'Return the mode you were given.' }
+    },
+    tlm: 'ADCS> SAFE → DETUMBLE → NOMINAL · rates 0.2°/s',
+    mode: 'NOMINAL',
+    debrief: 'Every transition fits on one screen and the whole machine is a pure function, <code>next(mode, event)</code>, that you can unit-test on the host. The cost Samek points out: once there are many states and events, the switch gets long.'
+  },
+  {
+    id: 's2', p: 'state', kind: 'code', file: 'adcs/mode_objects.cpp',
+    title: 'GoF State, heap-free',
+    mission: 'Modes now have entry actions (SAFE switches the magnetorquers off) and different behaviour per event. Give each mode its own class, as in the GoF State pattern, with one statically allocated object per state.',
+    brief: '<p>GoF roles: the <strong>Context</strong> (<code>Adcs</code>) keeps a pointer to the current <strong>State</strong> and forwards every event to it. Each <strong>ConcreteState</strong> decides the next state and asks the context to change to it.</p>',
+    refs: ['gof1994', 'samek2008'],
+    code:
+`class Adcs;
+
+class ModeState {                         // GoF: State
+public:
+    virtual void onEvent(Adcs& ctx, Evt e) = ⟦b3⟧;
+    virtual void onEntry(Adcs&) {}
+};
+
+class Adcs {                              // GoF: Context
+public:
+    void dispatch(Evt e) { state_->⟦b1⟧(*this, e); }
+    void changeTo(ModeState& s) {
+        state_ = &s;
+        state_->onEntry(*this);
+    }
+private:
+    ModeState* state_;
+};
+
+extern ModeState& detumbleMode;           // defined with its class
+
+struct SafeMode : ModeState {             // GoF: ConcreteState
+    void onEntry(Adcs&) override { torquers.off(); }
+    void onEvent(Adcs& ctx, Evt e) override {
+        if (e == Evt::BattOk) ctx.⟦b2⟧(detumbleMode);
+    }
+};
+SafeMode safeMode;                        // static storage, no heap`,
+    blanks: {
+      b1: { a: ['onEvent'], err: 'the context forwards the event to the current state', hint: 'The pure virtual that takes (ctx, e).' },
+      b2: { a: ['changeTo'], err: 'the state asks the context to switch states', hint: 'The Context member that sets state_ and runs onEntry.' },
+      b3: { a: ['0'], err: 'make onEvent pure virtual so every mode must handle events', hint: 'Pure virtual: = _' }
+    },
+    tlm: 'ADCS> SAFE entry: torquers off · transition to DETUMBLE',
+    mode: 'DETUMBLE',
+    debrief: 'Adding a mode now means adding a class, not editing every switch. GoF lists both sides: state-specific behaviour is localised and transitions are explicit, at the price of more classes. This one does use a vtable; the CRTP subsystem showed when that matters.'
+  },
+  {
+    id: 's3', p: 'state', kind: 'code', file: 'adcs/mode_table.cpp',
+    title: 'Transitions in flash',
+    mission: 'Flight review wants the transition rules auditable as data, and RAM is short. Move them into a table the toolchain can place in ROM.',
+    fsm: [['SAFE', 'BattOk', 'DETUMBLE'], ['DETUMBLE', 'RatesLow', 'NOMINAL'], ['DETUMBLE', 'BattLow', 'SAFE'], ['NOMINAL', 'BattLow', 'SAFE']],
+    brief: '<p>Samek’s <em>state-table</em> technique: transitions become data and one generic function dispatches them. TR 18015 §4.1 covers which objects can be placed in ROM. A constant-initialised array of plain structs is the easy case.</p>',
+    refs: ['samek2008', 'tr18015', 'holzmann2006'],
+    code:
+`struct Transition { Mode from; Evt evt; Mode to; };
+
+⟦b1⟧ Transition kTable[] = {     // constant: goes to .rodata / flash
+    { Mode::Safe,     Evt::BattOk,   Mode::Detumble },
+    { Mode::Detumble, Evt::RatesLow, Mode::Nominal  },
+    { Mode::Detumble, Evt::BattLow,  Mode::Safe     },
+    { Mode::Nominal,  Evt::BattLow,  Mode::Safe     },
+};
+
+Mode next(Mode m, Evt e) {
+    for (const Transition& t : kTable)
+        if (t.from == m && t.⟦b2⟧ == e) return ⟦b3⟧;
+    return m;
+}`,
+    blanks: {
+      b1: { a: ['constexpr', 'const', 'staticconstexpr', 'staticconst', 'inlineconstexpr'], err: 'a mutable table lands in RAM (.data); make it constant', hint: 'The keyword that makes the table a compile-time constant.' },
+      b2: { a: ['evt'], err: 'match on the event field of the row', hint: 'The middle member of Transition.' },
+      b3: { a: ['t.to'], err: 'return the destination mode of the matching row', hint: 'The row’s third field.' }
+    },
+    tlm: 'ADCS> transition table in flash · 4 rows · RAM freed',
+    mode: 'NOMINAL',
+    debrief: 'Reviewers can now read the rules as a table, and adding a transition doesn’t touch any logic. The cost is a linear search per event; at four rows that is nothing. The loop has a fixed bound and there is no function pointer anywhere, which keeps it inside NASA JPL’s Power of 10 rules 2 and 9.'
+  },
+  {
+    id: 's4', p: 'state', kind: 'mcq', file: 'adcs/modes_v2.txt',
+    title: 'Fault injection: transition explosion',
+    mission: 'ADCS now has ten modes. Every one of them needs <code>BattLow → SAFE</code>, and the review found two modes where someone forgot to add it.',
+    refs: ['harel1987', 'samek2008'],
+    code:
+`case Mode::SunPoint:   if (e == Evt::BattLow) return Mode::Safe; ...
+case Mode::NadirPoint: if (e == Evt::BattLow) return Mode::Safe; ...
+case Mode::Downlink:   /* forgot BattLow */                         ...
+case Mode::Imaging:    if (e == Evt::BattLow) return Mode::Safe; ...
+// ...six more`,
+    q: 'Which statecharts idea from Harel (1987) removes the duplication?',
+    options: [
+      { t: 'Orthogonality: run two state machines side by side.', ok: false, why: 'Orthogonal regions model independent concerns at the same time. They don’t share a transition between states of one machine.' },
+      { t: 'Hierarchy: put the nine powered modes inside one superstate that handles <code>BattLow → SAFE</code> once. Substates inherit it.', ok: true, why: 'Right. Harel’s depth (nested states) means an event a substate doesn’t handle is handled by its superstate. Samek’s book builds an embedded event processor on this.' },
+      { t: 'Add a <code>Mode::Any</code> enum value.', ok: false, why: 'A wildcard in a flat switch still needs special-casing everywhere; it isn’t a statechart construct.' },
+      { t: 'Make every mode class inherit a virtual destructor.', ok: false, why: 'Destructors have nothing to do with event handling.' }
+    ],
+    tlm: 'ADCS> hierarchical modes · BattLow handled once · 10/10 covered',
+    mode: 'NOMINAL',
+    debrief: 'Flat state machines grow transitions roughly as states × events. Harel’s statecharts add depth so common behaviour is written once, which is why hierarchical state machines are standard in flight and automotive software.'
+  },
+
+  /* ===== DEPENDENCY INJECTION ===== */
+  {
+    id: 'd1', p: 'di', kind: 'code', file: 'thermal/heater_ctl.cpp',
+    title: 'Constructor injection',
+    mission: 'The battery heater controller reads the thermistor ADC channel and drives the heater pin directly, so it can only be tested on the flight board in a thermal chamber. Make it receive its sensor and its switch through the constructor instead.',
+    brief: '<p>The controller depends on two small interfaces, not on concrete drivers. Flight code passes in the real thermistor and GPIO; a test passes in fakes. Fowler calls this <em>constructor injection</em>: the dependencies are complete and fixed once the object exists. Everything stays statically allocated.</p>',
+    refs: ['fowler2004', 'fprime', 'cgDesign'],
+    code:
+`struct ITempSensor {
+    virtual int32_t milliC() = 0;
+protected:
+    ~ITempSensor() = default;
+};
+struct ISwitch {
+    virtual void set(bool on) = 0;
+protected:
+    ~ISwitch() = default;
+};
+
+class HeaterCtl {
+public:
+    HeaterCtl(ITempSensor& t, ⟦b1⟧ h) : temp_(t), heater_(h) {}
+    void step() { heater_.set(temp_.milliC() < kSetpointMc); }
+private:
+    static constexpr int32_t kSetpointMc = -5000;   // -5 °C
+    ITempSensor& temp_;
+    ISwitch&     heater_;
+};
+
+// flight wiring: concrete parts, all static
+Ntc       batteryNtc{kAdcCh4};      // implements ITempSensor
+GpioOut   heaterPin{GPIOB, 7};      // implements ISwitch
+HeaterCtl heaterCtl{⟦b2⟧, heaterPin};`,
+    blanks: {
+      b1: { a: ['ISwitch&'], err: 'take the switch by reference to its interface, like the sensor', hint: 'Mirror the first parameter, for the other interface.' },
+      b2: { a: ['batteryNtc'], err: 'inject the flight thermistor object', hint: 'Which object below the class implements ITempSensor?' }
+    },
+    tlm: 'THERM> heater ctl wired: NTC ch4 → PB7 · duty 0%',
+    debrief: '<code>HeaterCtl</code> no longer knows which ADC channel or pin it uses; the wiring lives in one place at the bottom of the file. NASA JPL’s F´ framework applies the same idea to whole components: each one talks only through typed ports, and a separate topology connects them.'
+  },
+  {
+    id: 'd2', p: 'di', kind: 'code', file: 'test/heater_test.cpp',
+    title: 'Test doubles on the bench',
+    mission: 'Prove the heater turns on below −5 °C without a thermal chamber. Write a fake sensor whose reading the test controls, and a fake switch that records what it was told.',
+    brief: '<p>Because <code>HeaterCtl</code> only sees interfaces, the test can inject any objects that implement them. This runs on your laptop in milliseconds.</p>',
+    refs: ['fowler2004'],
+    code:
+`struct FakeTemp : ITempSensor {
+    int32_t value = 0;
+    int32_t milliC() override { return ⟦b1⟧; }
+};
+struct FakeSwitch : ISwitch {
+    bool on = false;
+    void set(bool v) override { on = v; }
+};
+
+TEST(Heater, TurnsOnBelowSetpoint) {
+    FakeTemp   t;
+    FakeSwitch h;
+    HeaterCtl  ctl{t, h};
+    t.value = -7000;              // -7 °C
+    ctl.⟦b2⟧();
+    EXPECT_TRUE(h.⟦b3⟧);
+}`,
+    blanks: {
+      b1: { a: ['value', 'this->value'], err: 'return the reading the test set', hint: 'The member the test assigns to.' },
+      b2: { a: ['step'], err: 'run one control step', hint: 'The only public function on HeaterCtl.' },
+      b3: { a: ['on'], err: 'check what the fake switch recorded', hint: 'FakeSwitch’s member.' }
+    },
+    tlm: 'TEST> Heater.TurnsOnBelowSetpoint PASSED (host build)',
+    debrief: 'The controller code under test is exactly the flight code; only the wiring changed. That is the payoff of injecting dependencies instead of reaching for globals like <code>GPIOB</code> inside the class.'
+  },
+  {
+    id: 'd3', p: 'di', kind: 'code', file: 'thermal/heater_ctl_t.hpp',
+    title: 'Compile-time injection',
+    mission: 'The new attitude loop runs at 1 kHz and the flight team wants no virtual calls in it. Inject the dependencies as template parameters instead: tests can still swap in fakes, but every call is direct.',
+    brief: '<p>Alexandrescu calls this policy-based design: a class template takes the types it depends on as parameters. Any type with the right member functions fits, with no shared base class and no vtable. It is the same trade you met in CRTP: flexibility moves from run time to compile time.</p>',
+    refs: ['alexandrescu2001', 'fowler2004', 'tr18015'],
+    code:
+`template <typename Temp, typename Switch>
+class HeaterCtlT {
+public:
+    HeaterCtlT(Temp& t, Switch& h) : temp_(t), heater_(h) {}
+    void step() { heater_.set(temp_.milliC() < -5000); }
+private:
+    Temp&   temp_;
+    Switch& heater_;
+};
+
+// flight: concrete types, calls resolved at compile time
+HeaterCtlT<Ntc, ⟦b1⟧> heaterCtl{batteryNtc, heaterPin};
+
+// host test: same template, fake types
+FakeTemp   fakeTemp;
+FakeSwitch fakeSwitch;
+HeaterCtlT<⟦b2⟧, FakeSwitch> ctl{fakeTemp, fakeSwitch};`,
+    blanks: {
+      b1: { a: ['GpioOut'], err: 'the flight switch type goes here', hint: 'What type is heaterPin?' },
+      b2: { a: ['FakeTemp'], err: 'the test’s temperature type goes here', hint: 'What type is fakeTemp?' }
+    },
+    tlm: 'ADCS> 1 kHz loop: 0 indirect calls · host tests still green',
+    debrief: 'Since C++17 you can drop the angle brackets and let class template argument deduction work it out: <code>HeaterCtlT heaterCtl{batteryNtc, heaterPin};</code>. The cost: each combination of types is a separate instantiation in flash, which TR 18015 §2.5.1 discusses as template overhead.'
+  },
+
+  /* ===== GoF CREATIONAL ===== */
+  {
+    id: 'ga', p: 'cre', kind: 'code', file: 'boot/board_factory.cpp', pattern: 'Abstract Factory', page: 87,
+    title: 'Abstract Factory: matching parts',
+    intent: 'Provide an interface for creating families of related objects without naming their concrete classes.',
+    mission: 'Kestrel-1 has two board revisions with different UART and flash parts. Boot code should ask a factory for “the console” and “the storage” and always get a matching pair, without naming a part number.',
+    brief: '<p>Here the factory hands out references to statically allocated drivers rather than calling <code>new</code>. Choosing the factory chooses the whole family.</p>',
+    refs: ['gofCre'],
+    code:
+`struct BoardFactory {                       // GoF: AbstractFactory
+    virtual IUart&    console() = 0;
+    virtual IStorage& storage() = 0;
+protected:
+    ~BoardFactory() = default;
+};
+
+struct RevAFactory : ⟦b1⟧ {               // GoF: ConcreteFactory
+    IUart&    console() override { return uart2_; }
+    IStorage& storage() override { return ⟦b2⟧; }
+private:
+    Stm32Uart   uart2_{USART2};
+    SpiNorFlash flash_{spi1, csFlash};
+};
+
+void boot(BoardFactory& board) {            // GoF: Client
+    board.console().print("KESTREL-1 boot\\n");
+    Log log{board.⟦b3⟧()};
+}`,
+    blanks: {
+      b1: { a: ['BoardFactory', 'publicBoardFactory'], err: 'a concrete factory derives from the abstract factory', hint: 'The interface declared at the top.' },
+      b2: { a: ['flash_'], err: 'return the Rev A storage part', hint: 'The SPI NOR flash member.' },
+      b3: { a: ['storage'], err: 'the log needs the board’s storage', hint: 'The other factory method.' }
+    },
+    tlm: 'BOOT> board rev A · console + storage from one family',
+    debrief: 'Supporting Rev B means writing <code>RevBFactory</code> and choosing it at boot from a board-ID pin; <code>boot()</code> doesn’t change. The cost GoF notes: adding a new <em>kind</em> of part, say a radio, means touching every factory.'
+  },
+  {
+    id: 'gb', p: 'cre', kind: 'code', file: 'tlm/housekeeping.cpp', pattern: 'Builder', page: 97,
+    title: 'Builder: one report, two formats',
+    intent: 'Separate how a complex object is constructed from how it is represented, so the same construction steps can produce different representations.',
+    mission: 'The housekeeping report goes to the radio as packed binary and to the debug console as readable text. Write the list of fields once.',
+    brief: '<p>GoF roles: the <strong>Director</strong> (<code>housekeeping()</code>) runs the construction steps; each <strong>ConcreteBuilder</strong> decides what a step produces. ESA’s Packet Utilisation Standard defines housekeeping reporting as service ST[03]; this is the on-board code that fills such a report.</p>',
+    refs: ['gofCre', 'ecss7041'],
+    code:
+`struct TlmBuilder {                          // GoF: Builder
+    virtual void field(const char* name, int32_t v) = 0;
+protected:
+    ~TlmBuilder() = default;
+};
+
+void housekeeping(⟦b1⟧ b) {                // GoF: Director
+    b.field("batt_mv", battMv);
+    b.field("temp_mc", tempMc);
+    b.field("mode",    int32_t(mode));
+}
+
+struct BinaryBuilder : TlmBuilder {         // ConcreteBuilder: radio
+    explicit BinaryBuilder(uint8_t* out) : p_(out) {}
+    void field(const char*, int32_t v) override {
+        std::memcpy(p_, &v, sizeof v);
+        p_ += ⟦b3⟧;
+    }
+    uint8_t* p_;
+};
+struct TextBuilder : TlmBuilder {           // ConcreteBuilder: console
+    void field(const char* name, int32_t v) override {
+        con.printf("%s=%ld\\n", name, long(v));
+    }
+};
+
+BinaryBuilder radio{txBuf};
+housekeeping(radio);
+TextBuilder dbg;
+⟦b2⟧(dbg);`,
+    blanks: {
+      b1: { a: ['TlmBuilder&'], err: 'the director works with any builder through the interface', hint: 'A reference to the Builder interface.' },
+      b3: { a: ['sizeof(v)', 'sizeofv', '4', 'sizeof(int32_t)'], show: 'sizeof v', err: 'advance by the number of bytes just copied', hint: 'How many bytes did memcpy write?' },
+      b2: { a: ['housekeeping'], err: 'run the same director with the text builder', hint: 'The Director function.' }
+    },
+    tlm: 'TLM> ST[03] report: 12 B to radio · same fields on console',
+    debrief: 'Adding a field is one line in the director, and both formats pick it up. GoF’s point is that the director doesn’t know what is being built, only the order of the steps.'
+  },
+  {
+    id: 'gf', p: 'cre', kind: 'code', file: 'payload/experiment.cpp', pattern: 'Factory Method', page: 107,
+    title: 'Factory Method: subclasses pick the detector',
+    intent: 'Define an interface for creating an object, but let subclasses decide which class to instantiate.',
+    mission: 'Every science experiment runs the same pass sequence but uses a different detector. The base class runs the pass; each experiment subclass decides which detector to create. The radiation experiment’s detector class is <code>Dosimeter</code>.',
+    brief: '<p>This level allocates from the heap, once, inside <code>init()</code> at boot. NASA JPL’s Power of 10 (rule 3) and the JSF AV C++ rules (AV Rule 206) both allow allocation during initialization and forbid it afterwards.</p>',
+    refs: ['gofCre', 'holzmann2006', 'jsf2005'],
+    code:
+`class Experiment {                          // GoF: Creator
+public:
+    void init() { det_ = ⟦b1⟧(); }          // boot only
+    void runPass() {
+        det_->powerOn();
+        record(det_->integrate(kPassMs));
+        det_->powerOff();
+    }
+    virtual ~Experiment() = default;
+protected:
+    virtual std::unique_ptr<IDetector> makeDetector() = 0;  // factory method
+private:
+    std::unique_ptr<IDetector> det_;
+};
+
+class RadiationExp : public Experiment {    // GoF: ConcreteCreator
+protected:
+    std::unique_ptr<IDetector> makeDetector() ⟦b3⟧ {
+        return std::make_unique<⟦b2⟧>(spi2, csDose);
+    }
+};`,
+    blanks: {
+      b1: { a: ['makeDetector'], err: 'init() should call the factory method', hint: 'The protected pure virtual.' },
+      b3: { a: ['override'], err: 'mark the overriding function', hint: 'The C++11 keyword that makes the compiler check you really override.' },
+      b2: { a: ['Dosimeter'], err: 'the radiation experiment creates a Dosimeter', hint: 'The mission text names it.' }
+    },
+    tlm: 'PAYLOAD> RadiationExp: dosimeter created at boot · heap frozen',
+    debrief: '<code>Experiment</code> never names a detector class; a new experiment is a new subclass. Many flight teams go one step further and replace the heap with a fixed pool or static storage, so even boot-time allocation can’t fail in a surprising way.'
+  },
+  {
+    id: 'gp', p: 'cre', kind: 'code', file: 'adcs/wheels.cpp', pattern: 'Prototype', page: 117,
+    title: 'Prototype: three wheels, one tuning',
+    intent: 'Specify the kinds of objects to create with a prototypical instance, and create new objects by copying that prototype.',
+    mission: 'All three reaction wheels start from the same tuned PID settings, stored once in flash. Each wheel gets its own RAM copy that can be retuned in orbit without touching the others.',
+    brief: '<p>For a plain value type, C++’s copy constructor is the clone operation. GoF’s version adds a virtual <code>clone()</code> so you can copy an object through a base-class pointer without knowing its concrete type.</p>',
+    refs: ['gofCre', 'tr18015'],
+    code:
+`struct PidConfig { float kp, ki, kd, iLimit; };
+
+⟦b1⟧ PidConfig kWheelPrototype{0.8f, 0.05f, 0.0f, 2.0f};   // flash
+
+class ReactionWheel {
+public:
+    explicit ReactionWheel(const PidConfig& proto) : pid_(⟦b2⟧) {}
+    void retune(float kp) { pid_.kp = kp; }   // this wheel only
+private:
+    PidConfig pid_;                            // RAM copy
+};
+
+ReactionWheel wheelX{kWheelPrototype};
+ReactionWheel wheelY{⟦b3⟧};
+ReactionWheel wheelZ{kWheelPrototype};`,
+    blanks: {
+      b1: { a: ['constexpr', 'const', 'staticconstexpr', 'staticconst', 'inlineconstexpr'], err: 'the prototype should be a constant so it stays in flash', hint: 'The C++11 keyword for a compile-time constant.' },
+      b2: { a: ['proto'], err: 'initialise the copy from the prototype', hint: 'The constructor parameter.' },
+      b3: { a: ['kWheelPrototype'], err: 'wheel Y starts from the same prototype', hint: 'Look at wheels X and Z.' }
+    },
+    tlm: 'ADCS> wheels X/Y/Z cloned from prototype · Y retuned',
+    debrief: 'The prototype sits in flash (TR 18015 §4.1 on ROMable objects) and costs no RAM; only the working copies do. Retuning wheel Y can’t touch the others or the original.'
+  },
+  {
+    id: 'gs', p: 'cre', kind: 'code', file: 'boot/clock_tree.cpp', pattern: 'Singleton', page: 127,
+    title: 'Singleton: the one clock tree',
+    intent: 'Ensure a class has only one instance, and provide a global point of access to it.',
+    mission: 'The chip has exactly one clock tree. Drivers need its frequency to compute baud rates and timer prescalers. Make a second instance impossible, and configure the PLL on first use.',
+    brief: '<p>A function-local <code>static</code> is constructed the first time control passes through its declaration, and the standard makes that initialization thread-safe ([stmt.dcl]). Many bare-metal builds pass <code>-fno-threadsafe-statics</code> to drop the guard code; then it’s safe only if nothing can call <code>instance()</code> concurrently.</p>',
+    refs: ['gofCre', 'isoLib', 'cgDesign'],
+    code:
+`class ClockTree {
+public:
+    static ClockTree& instance() {
+        ⟦b1⟧ ClockTree tree;          // built on first call
+        return tree;
+    }
+    ClockTree(const ClockTree&) = delete;
+    uint32_t sysclkHz() const { return hz_; }
+private:
+    ⟦b2⟧() : hz_(configurePll()) {}    // only instance() can construct
+    uint32_t hz_;
+};
+
+uint32_t brr = ClockTree::⟦b3⟧().sysclkHz() / 115200;`,
+    blanks: {
+      b1: { a: ['static'], err: 'the object must outlive the call and exist only once', hint: 'A local variable that lives for the whole program.' },
+      b2: { a: ['ClockTree'], err: 'declare the private constructor', hint: 'A constructor is named after its class.' },
+      b3: { a: ['instance'], err: 'get the one object through its access point', hint: 'The static member function.' }
+    },
+    tlm: 'BOOT> PLL locked · SYSCLK from the single ClockTree',
+    debrief: 'It works, and it’s also the pattern the DI subsystem argues against: every driver that calls <code>ClockTree::instance()</code> has a hidden dependency you can’t swap in a test. The C++ Core Guidelines (I.3) say to avoid singletons. A common middle ground: create the one object at boot and inject a reference to it.'
+  },
+
+  /* ===== GoF STRUCTURAL ===== */
+  {
+    id: 'ta', p: 'str', kind: 'code', file: 'hal/hal_uart_adapter.cpp', pattern: 'Adapter', page: 139,
+    title: 'Adapter: wrap the vendor driver',
+    intent: 'Convert the interface of a class into another interface that clients expect, so classes with incompatible interfaces can work together.',
+    mission: 'The radio board uses ST’s C HAL. Everything else in Kestrel-1 talks to an <code>IUart</code>. Make the vendor driver look like an <code>IUart</code> without changing either side.',
+    brief: '<p>GoF roles: <strong>Target</strong> is the interface clients use (<code>IUart</code>), <strong>Adaptee</strong> is what you already have (the HAL handle), and the <strong>Adapter</strong> translates between them. This is the object-adapter form: the adapter holds a reference to the adaptee.</p>',
+    refs: ['gofStr'],
+    code:
+`// vendor C API, can't change:
+// HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*, const uint8_t*,
+//                                     uint16_t size, uint32_t timeoutMs);
+
+struct IUart {                                  // GoF: Target
+    virtual bool write(std::span<const uint8_t> d) = 0;
+protected:
+    ~IUart() = default;
+};
+
+class HalUartAdapter : public ⟦b1⟧ {           // GoF: Adapter
+public:
+    explicit HalUartAdapter(UART_HandleTypeDef& h) : h_(h) {}
+    bool write(std::span<const uint8_t> d) override {
+        return HAL_UART_Transmit(&h_, d.data(), uint16_t(d.size()), 10)
+               == ⟦b2⟧;
+    }
+private:
+    UART_HandleTypeDef& ⟦b3⟧;                   // GoF: Adaptee
+};`,
+    blanks: {
+      b1: { a: ['IUart'], err: 'the adapter must implement the target interface', hint: 'The interface clients expect.' },
+      b2: { a: ['HAL_OK'], err: 'translate the vendor status into a bool', hint: 'The HAL’s success value.' },
+      b3: { a: ['h_'], err: 'declare the member the constructor initialises', hint: 'Look at the constructor’s initializer list.' }
+    },
+    tlm: 'HAL> vendor UART behind IUart · vendor code untouched',
+    debrief: 'The adapter is the only file that includes the vendor header. If the vendor HAL changes, or you move to another chip, the change stops here.'
+  },
+  {
+    id: 'tb', p: 'str', kind: 'code', file: 'gse/display.cpp', pattern: 'Bridge', page: 151,
+    title: 'Bridge: screens × buses',
+    intent: 'Decouple an abstraction from its implementation so that the two can vary independently.',
+    mission: 'The ground-support box drives the same display controller over SPI on one board and I²C on another, and shows two kinds of screens. Without a bridge that’s four classes; with one it’s two plus two.',
+    brief: '<p>The <strong>Abstraction</strong> (<code>Display</code>) holds a reference to an <strong>Implementor</strong> (<code>DisplayBus</code>). Screens are refined abstractions; buses are concrete implementors. Either side can grow without touching the other.</p>',
+    refs: ['gofStr'],
+    code:
+`struct DisplayBus {                              // GoF: Implementor
+    virtual void cmd(uint8_t c) = 0;
+    virtual void data(const uint8_t* p, std::size_t n) = 0;
+protected:
+    ~DisplayBus() = default;
+};
+
+class Display {                                  // GoF: Abstraction
+public:
+    explicit Display(DisplayBus& bus) : bus_(bus) {}
+    void clear() { bus_.cmd(kCmdClear); }
+protected:
+    ⟦b1⟧ bus_;                                    // the bridge
+};
+
+class StatusPanel : public ⟦b2⟧ {               // GoF: RefinedAbstraction
+public:
+    using Display::Display;
+    void showMode(const char* m) {
+        bus_.⟦b3⟧(reinterpret_cast<const uint8_t*>(m), std::strlen(m));
+    }
+};
+
+SpiDisplayBus spiBus{spi3, csLcd};
+I2cDisplayBus i2cBus{i2c2, 0x3C};
+StatusPanel   rack{spiBus}, bench{i2cBus};`,
+    blanks: {
+      b1: { a: ['DisplayBus&'], err: 'the abstraction keeps a reference to the implementor', hint: 'The constructor takes it by reference.' },
+      b2: { a: ['Display'], err: 'a screen type refines the abstraction', hint: 'The middle class.' },
+      b3: { a: ['data'], err: 'text goes through the data channel, not cmd', hint: 'The implementor function that takes a pointer and a length.' }
+    },
+    tlm: 'GSE> status panel on SPI rack + I²C bench · one class',
+    debrief: 'With three screens and three buses you’d write nine classes without the bridge and six with it. In C++ the bridge can also be compile-time, with the bus as a template parameter, as in the DI subsystem.'
+  },
+  {
+    id: 'tc', p: 'str', kind: 'code', file: 'eps/power_tree.cpp', pattern: 'Composite', page: 163,
+    title: 'Composite: the power tree',
+    intent: 'Compose objects into tree structures to represent part-whole hierarchies, and let clients treat single objects and compositions the same way.',
+    mission: 'The EPS reports current per rail. Some rails feed loads directly; some feed switched buses that feed more loads. Ask any node, load or bus, for its current the same way.',
+    brief: '<p>A <strong>Leaf</strong> (<code>Load</code>) answers directly; a <strong>Composite</strong> (<code>Bus</code>) sums its children, which can themselves be buses. The child array has a fixed size, so the loop has a fixed upper bound, as NASA JPL’s Power of 10 rule 2 requires.</p>',
+    refs: ['gofStr', 'holzmann2006'],
+    code:
+`struct PowerNode {                               // GoF: Component
+    virtual uint32_t currentMa() const = 0;
+protected:
+    ~PowerNode() = default;
+};
+
+struct Load : PowerNode {                        // GoF: Leaf
+    uint32_t ma;
+    explicit Load(uint32_t m) : ma(m) {}
+    uint32_t currentMa() const override { return ma; }
+};
+
+class Bus : public PowerNode {                   // GoF: Composite
+public:
+    Bus(std::initializer_list<const PowerNode*> kids) {
+        for (auto k : kids) kids_[n_++] = k;
+    }
+    uint32_t currentMa() const override {
+        uint32_t sum = 0;
+        for (std::size_t i = 0; i < n_; ++i) sum += kids_[i]->⟦b1⟧();
+        return sum;
+    }
+private:
+    std::array<const PowerNode*, 8> kids_{};
+    std::size_t n_ = 0;
+};
+
+Load radio{450}, obc{120}, heater{900}, camera{300};
+Bus  payloadBus{&camera, &heater};
+Bus  main3v3{&radio, &obc, ⟦b2⟧};               // a bus inside a bus
+uint32_t total = main3v3.currentMa();            // 1770 mA`,
+    blanks: {
+      b1: { a: ['currentMa'], err: 'ask each child the same question', hint: 'The Component’s only function.' },
+      b2: { a: ['&payloadBus'], err: 'the payload bus is a child of the 3V3 rail', hint: 'Pass a pointer to the other Bus.' }
+    },
+    tlm: 'EPS> 3V3 rail 1770 mA · payload bus 1200 mA',
+    debrief: '<code>main3v3</code> doesn’t know one of its children is itself a bus: 450 + 120 + (300 + 900) = 1770 mA. A version for flight would also check <code>n_</code> against the array size in the constructor.'
+  },
+  {
+    id: 'td', p: 'str', kind: 'code', file: 'comms/crc_sink.cpp', pattern: 'Decorator', page: 175,
+    title: 'Decorator: add a CRC on the way out',
+    intent: 'Attach extra responsibilities to an object dynamically, as a flexible alternative to subclassing.',
+    mission: 'The radio link needs a CRC-16 after every frame; the debug UART doesn’t. Add the CRC by wrapping the radio’s byte sink, without changing the sink or the code that writes frames.',
+    brief: '<p>The <strong>Decorator</strong> implements the same interface as what it wraps, does its extra work, and forwards each call. Decorators stack: you could wrap the CRC sink in a whitening sink, and so on.</p>',
+    refs: ['gofStr'],
+    code:
+`struct ByteSink {                                // GoF: Component
+    virtual void put(uint8_t b) = 0;
+protected:
+    ~ByteSink() = default;
+};
+
+class CrcSink : public ⟦b1⟧ {                   // GoF: Decorator
+public:
+    explicit CrcSink(ByteSink& inner) : inner_(inner) {}
+    void put(uint8_t b) override {
+        crc_ = crc16Step(crc_, b);
+        inner_.⟦b2⟧(b);                           // forward it
+    }
+    void finish() { inner_.put(crc_ >> 8); inner_.put(crc_ & 0xFF); }
+private:
+    ByteSink& inner_;
+    uint16_t  crc_ = 0xFFFF;
+};
+
+UartSink radioTx{uart1};                         // GoF: ConcreteComponent
+CrcSink  framed{⟦b3⟧};
+for (uint8_t b : frame) framed.put(b);
+framed.finish();`,
+    blanks: {
+      b1: { a: ['ByteSink'], err: 'a decorator implements the interface it decorates', hint: 'The Component interface.' },
+      b2: { a: ['put'], err: 'pass the byte on to the wrapped sink', hint: 'The interface’s only function.' },
+      b3: { a: ['radioTx'], err: 'wrap the radio sink', hint: 'The UartSink declared just above.' }
+    },
+    tlm: 'COMMS> frames + CRC-16 on radio · debug UART unchanged',
+    debrief: 'The frame writer still calls <code>put()</code> on a <code>ByteSink&amp;</code> and never learns a CRC was added. GoF lists the costs: many small objects, and you can no longer compare a decorated object’s identity with the object it wraps.'
+  },
+  {
+    id: 'tf', p: 'str', kind: 'code', file: 'payload/camera_facade.cpp', pattern: 'Facade', page: 185,
+    title: 'Facade: one call to take a picture',
+    intent: 'Provide one unified, higher-level interface to a set of interfaces in a subsystem, making the subsystem easier to use.',
+    mission: 'Taking an image means powering a rail, waiting for the sensor, setting exposure, triggering, running DMA, storing the frame and powering down. Mission ops should make one call.',
+    brief: '<p>The <strong>Facade</strong> doesn’t hide the subsystem classes; code that needs fine control can still use them. It gives everyone else one simple entry point.</p>',
+    refs: ['gofStr', 'dne1994'],
+    code:
+`class CameraFacade {                             // GoF: Facade
+public:
+    CameraFacade(PowerSwitch& p, ImageSensor& s, Dma& d, Storage& st)
+        : pwr_(p), sen_(s), dma_(d), st_(st) {}
+    bool snap(uint32_t exposureUs) {
+        pwr_.on(kCamRail);
+        delayMs(20);                             // sensor power-up
+        sen_.setExposure(exposureUs);
+        sen_.trigger();
+        dma_.start(sen_.frameAddr(), sen_.frameBytes());
+        dma_.wait();
+        bool ok = st_.append(sen_.frameAddr(), sen_.frameBytes());
+        pwr_.⟦b1⟧(kCamRail);
+        return ok;
+    }
+private:
+    PowerSwitch& pwr_; ImageSensor& sen_; Dma& dma_; Storage& st_;
+};
+
+// mission ops: one call instead of eight steps
+if (!camera.⟦b2⟧(1200)) tlm.flag(Fault::CameraFailed);`,
+    blanks: {
+      b1: { a: ['off'], err: 'power the camera rail down after the frame is stored', hint: 'The opposite of the first call.' },
+      b2: { a: ['snap'], err: 'call the facade’s single entry point', hint: 'The facade’s public function.' }
+    },
+    tlm: 'PAYLOAD> image 0042 stored · camera rail off',
+    debrief: 'Look at the rail. If someone adds an early <code>return</code> after a DMA timeout, the camera stays powered and drains the battery: the RAII lesson again. A rail guard object at the top of <code>snap()</code> would make the power-down automatic.'
+  },
+  {
+    id: 'tw', p: 'str', kind: 'code', file: 'gse/font.cpp', pattern: 'Flyweight', page: 195,
+    title: 'Flyweight: one glyph per letter',
+    intent: 'Use sharing to support large numbers of fine-grained objects efficiently.',
+    mission: 'The status display draws hundreds of characters. A bitmap per character on screen would eat RAM. Share one glyph per letter, in flash, and pass the position in from outside.',
+    brief: '<p>GoF splits state in two. <strong>Intrinsic</strong> state is shared and lives in the flyweight (the glyph’s width and bitmap). <strong>Extrinsic</strong> state depends on context and is passed in by the client (where on screen to draw).</p>',
+    refs: ['gofStr', 'tr18015'],
+    code:
+`struct Glyph {                                   // GoF: Flyweight
+    uint8_t w;                                   // intrinsic: shared
+    std::array<uint8_t, 8> rows;
+};
+
+⟦b1⟧ std::array<Glyph, 95> kFont = {{ /* ' ' .. '~' */ }};   // flash
+
+⟦b2⟧ glyphFor(char c) { return kFont[c - ' ']; }    // no copy
+
+void drawText(Canvas& cv, int x, int y, const char* s) {
+    for (; *s; ++s) {
+        const Glyph& g = glyphFor(*s);
+        cv.blit(x, y, g.rows);                   // extrinsic: x, y
+        x += g.⟦b3⟧ + 1;
+    }
+}`,
+    blanks: {
+      b1: { a: ['constexpr', 'const', 'staticconstexpr', 'staticconst', 'inlineconstexpr'], err: 'make the font table constant so it lives in flash', hint: 'The C++11 keyword for a compile-time constant.' },
+      b2: { a: ['constGlyph&'], show: 'const Glyph&', err: 'return a reference to the shared glyph, not a copy', hint: 'A reference to a constant Glyph.' },
+      b3: { a: ['w'], err: 'advance by this glyph’s width', hint: 'The intrinsic width field.' }
+    },
+    tlm: 'GSE> 95 glyphs in flash · 0 B RAM per character drawn',
+    debrief: 'However much text is on screen there are only 95 glyph objects, and they cost no RAM (TR 18015 §4.1 on ROMable objects). The client carries the extrinsic state, here just <code>x</code> and <code>y</code>.'
+  },
+  {
+    id: 'tp', p: 'str', kind: 'code', file: 'adcs/eps_proxy.cpp', pattern: 'Proxy', page: 207,
+    title: 'Proxy: the EPS is on another board',
+    intent: 'Provide a surrogate or placeholder for another object to control access to it.',
+    mission: 'The EPS runs on its own microcontroller, reached over CAN. ADCS code should call <code>batteryMv()</code> as if the EPS were local. Build a remote proxy.',
+    brief: '<p>The <strong>Proxy</strong> implements the same interface as the real subject and forwards each call, here as a CAN request. GoF describes several kinds: a <em>remote proxy</em> (this one) hides that the object lives elsewhere; a <em>protection proxy</em> checks access first.</p>',
+    refs: ['gofStr'],
+    code:
+`struct IEps {                                     // GoF: Subject
+    virtual uint16_t batteryMv() = 0;
+    virtual void     railOn(uint8_t rail) = 0;
+protected:
+    ~IEps() = default;
+};
+
+class EpsCanProxy : public ⟦b1⟧ {                // GoF: Proxy (remote)
+public:
+    explicit EpsCanProxy(CanBus& can) : can_(can) {}
+    uint16_t batteryMv() override {
+        auto reply = ⟦b2⟧.request(kEpsNode, Cmd::GetBattMv, 50 /*ms*/);
+        return reply ? reply->u16(0) : kUnknownMv;   // no answer
+    }
+    void railOn(uint8_t rail) override {
+        can_.send(kEpsNode, Cmd::RailOn, rail);
+    }
+private:
+    CanBus& can_;
+};
+
+void Adcs::checkPower(⟦b3⟧ eps) {                // can't tell it's remote
+    if (eps.batteryMv() < 6400) dispatch(Evt::BattLow);
+}`,
+    blanks: {
+      b1: { a: ['IEps'], err: 'the proxy implements the subject’s interface', hint: 'The interface at the top.' },
+      b2: { a: ['can_', 'this->can_'], err: 'send the request over the CAN bus member', hint: 'The member the constructor stored.' },
+      b3: { a: ['IEps&'], err: 'ADCS should depend on the interface, so local and remote both fit', hint: 'A reference to the Subject.' }
+    },
+    tlm: 'ADCS> EPS via CAN proxy · batt 7420 mV',
+    debrief: 'A remote call can fail or be slow in ways a local one can’t, so the proxy decides what “no answer” means (<code>kUnknownMv</code> here). The client code stays the same; the proxy is where those decisions live.'
+  },
+
+  /* ===== GoF BEHAVIORAL ===== */
+  {
+    id: 'bc', p: 'beh', kind: 'code', file: 'obsw/tc_chain.cpp', pattern: 'Chain of Responsibility', page: 223,
+    title: 'Chain of Responsibility: route the telecommand',
+    intent: 'Avoid coupling the sender of a request to its receiver by giving more than one object a chance to handle it; chain the receivers and pass the request along until one handles it.',
+    mission: 'Uplinked telecommands arrive tagged with an ESA PUS service type. Housekeeping commands (ST[03]) go to one handler, function-management commands (ST[08]) to another, and anything left over must be rejected with a failure report.',
+    brief: '<p>Each <strong>Handler</strong> either handles the request or passes it to the next. The last link always handles it, so nothing falls off the end. In ECSS-E-ST-70-41C, request verification (ST[01]) is how the spacecraft reports acceptance or failure of each telecommand.</p>',
+    refs: ['gofBeh', 'ecss7041'],
+    code:
+`class TcHandler {                                // GoF: Handler
+public:
+    explicit TcHandler(TcHandler* next) : next_(next) {}
+    void handle(const Telecommand& tc) {
+        if (!tryHandle(tc) && next_) next_->⟦b1⟧(tc);
+    }
+protected:
+    virtual bool tryHandle(const Telecommand& tc) = 0;
+    ~TcHandler() = default;
+private:
+    TcHandler* next_;
+};
+
+struct HkTc : TcHandler {                        // ST[03] housekeeping
+    using TcHandler::TcHandler;
+    bool tryHandle(const Telecommand& tc) override {
+        return tc.service == 3 && hk.exec(tc);
+    }
+};
+struct FuncTc : TcHandler {                      // ST[08] function mgmt
+    using TcHandler::TcHandler;
+    bool tryHandle(const Telecommand& tc) override {
+        return tc.service == 8 && funcs.exec(tc);
+    }
+};
+struct RejectTc : TcHandler {                    // end of the chain
+    using TcHandler::TcHandler;
+    bool tryHandle(const Telecommand& tc) override {
+        verification.reportFailure(tc);          // ST[01]
+        return ⟦b2⟧;
+    }
+};
+
+RejectTc reject{nullptr};
+FuncTc   funcTc{&reject};
+HkTc     hkTc{⟦b3⟧};                        // uplink calls hkTc.handle(tc)`,
+    blanks: {
+      b1: { a: ['handle'], err: 'pass the request on by calling the next handler’s entry point', hint: 'The public function, not tryHandle.' },
+      b2: { a: ['true'], err: 'the last link must report that it dealt with the request', hint: 'Did RejectTc deal with it?' },
+      b3: { a: ['&funcTc'], err: 'housekeeping passes unhandled commands to function management', hint: 'A pointer to the next link.' }
+    },
+    tlm: 'OBSW> TC(8,1) → FuncTc · TC(99,1) → rejected, ST[01] failure report',
+    debrief: 'The uplink code knows only <code>hkTc</code>; supporting another service means adding a link. GoF’s caveat: nothing guarantees a request gets handled unless the chain ends in a catch-all, which is what <code>RejectTc</code> is for.'
+  },
+  {
+    id: 'bm', p: 'beh', kind: 'code', file: 'obsw/schedule.cpp', pattern: 'Command', page: 233,
+    title: 'Command: the time-tagged schedule',
+    intent: 'Encapsulate a request as an object, so you can parameterise clients with requests, queue or log them, and support undo.',
+    mission: 'Kestrel-1 is out of ground contact for most of each orbit, so commands are uplinked in advance with execution times. Store each one as an object and run it when its time comes.',
+    brief: '<p>Each <strong>Command</strong> bundles a receiver and its arguments behind one <code>execute()</code>. The <strong>Invoker</strong> (the scheduler) runs them without knowing what they do. ESA’s PUS defines this on-board function as time-based scheduling, service ST[11].</p>',
+    refs: ['gofBeh', 'ecss7041'],
+    code:
+`struct Command {                                  // GoF: Command
+    virtual void execute() = 0;
+protected:
+    ~Command() = default;
+};
+
+struct RailOn : Command {                         // GoF: ConcreteCommand
+    Eps& eps; uint8_t rail;                       // receiver + argument
+    RailOn(Eps& e, uint8_t r) : eps(e), rail(r) {}
+    void execute() override { eps.⟦b1⟧(rail); }
+};
+
+struct Timed { uint32_t atSec; Command* cmd; };
+std::array<Timed, 32> schedule{};                 // filled from uplink
+
+void onSecondTick(uint32_t now) {                 // GoF: Invoker
+    for (Timed& t : schedule) {
+        if (t.cmd && t.atSec == now) {
+            t.cmd->⟦b2⟧();
+            t.cmd = ⟦b3⟧;                         // slot free again
+        }
+    }
+}`,
+    blanks: {
+      b1: { a: ['railOn'], err: 'the command calls its receiver', hint: 'What does this command turn on?' },
+      b2: { a: ['execute'], err: 'the invoker only knows execute()', hint: 'The Command interface’s function.' },
+      b3: { a: ['nullptr'], err: 'mark the slot as empty', hint: 'The C++11 null pointer literal.' }
+    },
+    tlm: 'OBSW> ST[11] t=58213 RailOn(PAYLOAD) executed · 31 slots free',
+    debrief: 'Because requests are objects, the schedule can be listed in telemetry, logged, or cleared from the ground. That is the “queue or log” half of GoF’s intent, and it’s what lets a PUS scheduler report and delete scheduled activities.'
+  },
+  {
+    id: 'bi', p: 'beh', kind: 'code', file: 'obsw/monitor_rules.cpp', pattern: 'Interpreter', page: 243,
+    title: 'Interpreter: on-board monitoring rules',
+    intent: 'Given a language, define a representation for its grammar and an interpreter that uses it to evaluate sentences in the language.',
+    mission: 'Operators want to uplink new survival rules, like “battery below 6.4 V <em>and</em> temperature below −10 °C”, without a software update. Represent each rule as a small expression tree and evaluate it against the latest telemetry.',
+    brief: '<p>Each grammar rule becomes a class. <strong>Terminal</strong> expressions compare one parameter with a limit; <strong>nonterminal</strong> expressions combine other expressions. ESA’s PUS on-board monitoring service (ST[12]) checks parameters against limits; a tree like this is one way to go further and combine checks.</p>',
+    refs: ['gofBeh', 'ecss7041'],
+    code:
+`struct Expr {                                     // GoF: AbstractExpression
+    virtual bool eval(const Tlm& t) const = 0;
+protected:
+    ~Expr() = default;
+};
+
+struct Below : Expr {                             // TerminalExpression
+    Param p; int32_t limit;
+    Below(Param p_, int32_t l) : p(p_), limit(l) {}
+    bool eval(const Tlm& t) const override { return t[p] < limit; }
+};
+
+struct And : Expr {                               // NonterminalExpression
+    const Expr& a; const Expr& b;
+    And(const Expr& x, const Expr& y) : a(x), b(y) {}
+    bool eval(const Tlm& t) const override { return a.eval(t) ⟦b1⟧ b.eval(t); }
+};
+
+// "battMv < 6400 && tempMc < -10000", parsed once when uplinked
+Below lowBatt{Param::BattMv, 6400};
+Below cold{Param::TempMc, -10000};
+And   survival{lowBatt, ⟦b2⟧};
+
+if (survival.⟦b3⟧(latestTlm)) adcs.dispatch(Evt::BattLow);`,
+    blanks: {
+      b1: { a: ['&&', 'and'], err: 'And is true only when both sides are true', hint: 'C++’s logical AND operator.' },
+      b2: { a: ['cold'], err: 'combine low battery with the cold rule', hint: 'The other terminal expression.' },
+      b3: { a: ['eval'], err: 'evaluate the whole tree against telemetry', hint: 'The AbstractExpression’s function.' }
+    },
+    tlm: 'OBSW> rule SURVIVAL loaded · evaluated every cycle · not triggered',
+    debrief: 'Adding <code>Or</code> or <code>Above</code> is one small class each. GoF says Interpreter suits simple grammars; for bigger ones, use a parser generator. In flight the parsed nodes would live in a static pool, not on the heap.'
+  },
+  {
+    id: 'bt', p: 'beh', kind: 'code', file: 'obsw/ring.hpp', pattern: 'Iterator', page: 257,
+    title: 'Iterator: walk the history buffer',
+    intent: 'Provide a way to access the elements of an aggregate sequentially without exposing how it is stored.',
+    mission: 'The last 64 attitude samples live in a ring buffer. Downlink code should loop over them oldest-first with a plain range-for, without knowing about wrap-around.',
+    brief: '<p>C++ builds this pattern into the language: a range-based <code>for</code> calls <code>begin()</code>, <code>end()</code>, <code>!=</code>, <code>++</code> and <code>*</code> ([stmt.ranged]). The <strong>Iterator</strong> hides the modulo arithmetic. The loop is bounded by the buffer size, as NASA JPL’s Power of 10 rule 2 asks.</p>',
+    refs: ['gofBeh', 'isoLib', 'holzmann2006'],
+    code:
+`template <typename T, std::size_t N>
+class Ring {                                      // GoF: Aggregate
+public:
+    class iterator {                              // GoF: Iterator
+    public:
+        iterator(const Ring* r, std::size_t i) : r_(r), i_(i) {}
+        const T& operator*() const { return r_->buf_[(r_->tail_ + i_) % N]; }
+        iterator& operator⟦b1⟧() { ++i_; return *this; }
+        bool operator!=(const iterator& o) const { return i_ != o.i_; }
+    private:
+        const Ring* r_;
+        std::size_t i_;
+    };
+    iterator begin() const { return {this, 0}; }
+    iterator end()   const { return {this, ⟦b2⟧}; }
+    void push(const T& v);
+private:
+    std::array<T, N> buf_{};
+    std::size_t tail_ = 0, count_ = 0;
+};
+
+Ring<Sample, 64> history;
+for (const Sample& s : ⟦b3⟧) downlink(s);       // oldest first`,
+    blanks: {
+      b1: { a: ['++'], err: 'range-for advances the iterator with prefix ++', hint: 'The increment operator.' },
+      b2: { a: ['count_'], err: 'end is one past the last stored element', hint: 'How many samples are in the buffer?' },
+      b3: { a: ['history'], err: 'loop over the ring itself', hint: 'The Ring object.' }
+    },
+    tlm: 'OBSW> downlinked 64 samples oldest-first · wrap handled',
+    debrief: 'Downlink code never sees <code>tail_</code> or the modulo. Swap the ring for a flash-backed log with the same <code>begin()</code> and <code>end()</code>, and the loop doesn’t change.'
+  },
+  {
+    id: 'bd', p: 'beh', kind: 'code', file: 'payload/mediator.cpp', pattern: 'Mediator', page: 273,
+    title: 'Mediator: radio quiet during exposures',
+    intent: 'Define an object that encapsulates how a set of objects interact, so they don’t refer to each other directly.',
+    mission: 'Radio transmissions put noise into the camera’s images, so the radio must pause during every exposure. Neither the camera nor the radio should know the other exists.',
+    brief: '<p><strong>Colleagues</strong> (camera, radio) report to the <strong>Mediator</strong>, and the mediator decides who reacts. The interaction rule lives in one class instead of being spread across the payloads.</p>',
+    refs: ['gofBeh'],
+    code:
+`class PayloadMediator;
+
+struct Camera {                                   // GoF: Colleague
+    PayloadMediator& med;
+    void beginExposure();
+};
+struct Radio {                                    // GoF: Colleague
+    void pauseTx();
+    void resumeTx();
+};
+
+class PayloadMediator {                           // GoF: Mediator
+public:
+    explicit PayloadMediator(Radio& r) : radio_(r) {}
+    void exposureStarted() { radio_.⟦b1⟧(); }    // RF noise ruins frames
+    void exposureDone()    { radio_.resumeTx(); }
+private:
+    Radio& radio_;
+};
+
+void Camera::beginExposure() {
+    med.⟦b2⟧();                                  // camera never sees Radio
+    sensor.trigger();
+}`,
+    blanks: {
+      b1: { a: ['pauseTx'], err: 'the mediator tells the radio to stop transmitting', hint: 'One of Radio’s two functions.' },
+      b2: { a: ['exposureStarted'], err: 'the camera reports to the mediator, nothing more', hint: 'The mediator function for the start of an exposure.' }
+    },
+    tlm: 'PAYLOAD> exposure 0043: radio paused 12 ms · frame clean',
+    debrief: 'When the thermal team adds “no heater switching during exposures”, it’s one more line in the mediator. GoF’s warning: the mediator can grow into the most complex class in the system, so keep it to interaction rules only.'
+  },
+  {
+    id: 'be', p: 'beh', kind: 'code', file: 'adcs/estimator_save.cpp', pattern: 'Memento', page: 283,
+    title: 'Memento: survive the reboot',
+    intent: 'Without breaking encapsulation, capture an object’s internal state so the object can be restored to it later.',
+    mission: 'Before a software update reboots the computer, save the attitude estimator’s state to radiation-tolerant FRAM, so it doesn’t take an orbit to reconverge. Nothing outside the estimator should be able to read or edit the saved fields.',
+    brief: '<p>The <strong>Memento</strong>’s fields are private, and only the <strong>Originator</strong> (the estimator) is a friend. The <strong>Caretaker</strong> (the FRAM store) keeps the memento as opaque bytes. A CRC catches a memento corrupted while stored.</p>',
+    refs: ['gofBeh'],
+    code:
+`class AttitudeEstimator {                        // GoF: Originator
+public:
+    class Memento {                              // opaque to everyone else
+        friend class AttitudeEstimator;
+        Quat q; Vec3 gyroBias; uint32_t crc;
+    };
+    Memento save() const {
+        Memento m;
+        m.q = q_; m.gyroBias = bias_; m.crc = crcOf(q_, bias_);
+        return m;
+    }
+    bool restore(const Memento& m) {
+        if (m.crc != crcOf(m.q, m.⟦b1⟧)) return false;   // keep defaults
+        q_ = m.q; bias_ = m.gyroBias;
+        return ⟦b2⟧;
+    }
+private:
+    Quat q_; Vec3 bias_;
+};
+
+// before the update reboot (GoF: Caretaker = the FRAM store)
+fram.write(kSlotAdcs, estimator.⟦b3⟧());`,
+    blanks: {
+      b1: { a: ['gyroBias'], err: 'check the CRC over both saved fields', hint: 'The other field passed to crcOf in save().' },
+      b2: { a: ['true'], err: 'report that the state was restored', hint: 'restore() succeeded.' },
+      b3: { a: ['save'], err: 'ask the estimator for a memento', hint: 'The function that creates one.' }
+    },
+    tlm: 'ADCS> state restored from FRAM after reboot · converged in 4 s',
+    debrief: 'The FRAM code handles bytes and never touches the quaternion. If the CRC check fails, the estimator starts from defaults: a slower start, but never a corrupted one.'
+  },
+  {
+    id: 'bo', p: 'beh', kind: 'code', file: 'eps/battery_monitor.cpp', pattern: 'Observer', page: 293,
+    title: 'Observer: everyone hears the battery',
+    intent: 'Define a one-to-many dependency so that when one object changes state, all its dependents are notified and updated automatically.',
+    mission: 'The mode manager, the heater controller and the payload scheduler all need to react when battery voltage changes. The battery monitor shouldn’t know any of them by name.',
+    brief: '<p>The <strong>Subject</strong> keeps a list of <strong>Observers</strong> and calls each one on a change. The list is a fixed array, so subscribing can fail but never allocates (Power of 10 rule 3). ESA’s PUS event-action service (ST[19]) is the ground-configurable cousin: an event triggers a stored action.</p>',
+    refs: ['gofBeh', 'holzmann2006', 'ecss7041', 'fprime'],
+    code:
+`struct BattObserver {                             // GoF: Observer
+    virtual void onBattery(uint16_t mv) = 0;
+protected:
+    ~BattObserver() = default;
+};
+
+class BatteryMonitor {                            // GoF: Subject
+public:
+    bool attach(BattObserver& o) {
+        if (n_ == obs_.size()) return false;      // full: no heap
+        obs_[n_++] = ⟦b1⟧;
+        return true;
+    }
+    void sample(uint16_t mv) {
+        for (std::size_t i = 0; i < n_; ++i) obs_[i]->⟦b2⟧(mv);
+    }
+private:
+    std::array<BattObserver*, 6> obs_{};
+    std::size_t n_ = 0;
+};
+
+struct ModeManager : BattObserver {               // GoF: ConcreteObserver
+    void onBattery(uint16_t mv) override {
+        if (mv < 6400) adcs.dispatch(Evt::BattLow);
+    }
+};
+ModeManager modes;
+bool ok = battMon.attach(⟦b3⟧);`,
+    blanks: {
+      b1: { a: ['&o'], err: 'store a pointer to the observer', hint: 'The array holds pointers; take the address.' },
+      b2: { a: ['onBattery'], err: 'notify each observer', hint: 'The Observer interface’s function.' },
+      b3: { a: ['modes'], err: 'subscribe the mode manager', hint: 'The ModeManager object.' }
+    },
+    tlm: 'EPS> 3 observers notified · ADCS → SAFE on BattLow',
+    debrief: 'The monitor compiles without including any observer’s header. NASA JPL’s F´ gets the same decoupling another way: a component emits on an output port, and the topology decides which components that port reaches.'
+  },
+  {
+    id: 'bs', p: 'beh', kind: 'code', file: 'adcs/control_law.cpp', pattern: 'Strategy', page: 315,
+    title: 'Strategy: swap the control law',
+    intent: 'Define a family of algorithms, encapsulate each one, and make them interchangeable, so the algorithm can vary independently of the code that uses it.',
+    mission: 'In DETUMBLE the controller uses B-dot to damp rotation; in NOMINAL it uses a PD law to point at Earth. The control loop shouldn’t need an <code>if</code> for every law.',
+    brief: '<p>The <strong>Context</strong> (<code>Controller</code>) holds a pointer to the current <strong>Strategy</strong> and delegates to it. The ADCS mode states choose the strategy on entry. NASA JPL’s Power of 10 rule 9 bans function pointers in C; a virtual call is the same kind of indirection, so a team holding to that rule would choose the law at compile time instead, with the template form from the DI subsystem.</p>',
+    refs: ['gofBeh', 'holzmann2006', 'alexandrescu2001'],
+    code:
+`struct ControlLaw {                               // GoF: Strategy
+    virtual Vec3 torque(const AdcsState& s) = 0;
+protected:
+    ~ControlLaw() = default;
+};
+
+struct BDot : ControlLaw {                        // detumble
+    Vec3 torque(const AdcsState& s) override { return s.bDot * -kBdotGain; }
+};
+struct PdPointing : ControlLaw {                  // point at nadir
+    Vec3 torque(const AdcsState& s) override { return s.qErr * -kp + s.rate * -kd; }
+};
+
+class Controller {                                // GoF: Context
+public:
+    void use(ControlLaw& law) { law_ = ⟦b1⟧; }
+    Vec3 step(const AdcsState& s) { return law_->⟦b2⟧(s); }
+private:
+    ControlLaw* law_ = nullptr;
+};
+
+BDot       bdot;
+PdPointing pd;
+void DetumbleMode::onEntry(Adcs&) { ctrl.use(bdot); }
+void NominalMode::onEntry(Adcs&)  { ctrl.use(⟦b3⟧); }`,
+    blanks: {
+      b1: { a: ['&law'], err: 'store a pointer to the chosen law', hint: 'law_ is a pointer; law is a reference.' },
+      b2: { a: ['torque'], err: 'delegate to the current strategy', hint: 'The Strategy’s function.' },
+      b3: { a: ['pd'], err: 'NOMINAL points at Earth with the PD law', hint: 'The PdPointing object.' }
+    },
+    tlm: 'ADCS> NOMINAL: PD law active · pointing error 0.4°',
+    debrief: 'State and Strategy look alike in code. The difference is who decides: a State object picks the next state itself, while a Strategy is chosen from outside, here by the mode states.'
+  },
+  {
+    id: 'bp', p: 'beh', kind: 'code', file: 'adcs/sensor_job.cpp', pattern: 'Template Method', page: 325,
+    title: 'Template Method: the sampling recipe',
+    intent: 'Define the skeleton of an algorithm in one operation and let subclasses redefine certain steps without changing the algorithm’s structure.',
+    mission: 'Every low-power sensor is sampled the same way: power up, wait to settle, read, power down, convert. Fix that order in one place and let each sensor fill in the steps.',
+    brief: '<p><code>run()</code> is the template method. It isn’t virtual, so subclasses can’t change the order. The steps are <em>primitive operations</em> (pure virtual, must be provided) or <em>hooks</em> (virtual with a default, may be provided). The State category uses the same pure vs non-pure split for <code>onEvent</code> and <code>onEntry</code>.</p>',
+    refs: ['gofBeh'],
+    code:
+`class SensorJob {
+public:
+    int32_t run() {                               // the template method
+        powerUp();
+        delayMs(settleMs());
+        int32_t raw = readRaw();
+        powerDown();
+        return ⟦b1⟧(raw);
+    }
+protected:
+    virtual void     powerUp()   = 0;             // primitive operations
+    virtual void     powerDown() = 0;
+    virtual int32_t  readRaw()   = 0;
+    virtual int32_t  convert(int32_t raw) { return raw; }   // hooks
+    virtual uint32_t settleMs() const   { return 1; }
+    ~SensorJob() = default;
+};
+
+class SunSensorJob : public SensorJob {
+    void     powerUp()   override { sunEn.high(); }
+    void     powerDown() override { sunEn.⟦b2⟧(); }
+    int32_t  readRaw()   override { return adcRead(kChSun); }
+    uint32_t settleMs() const override { return ⟦b3⟧; }   // amp needs 5 ms
+};`,
+    blanks: {
+      b1: { a: ['convert'], err: 'the last step converts the raw reading', hint: 'The hook that takes raw.' },
+      b2: { a: ['low'], err: 'power down by driving the enable pin low', hint: 'The opposite of powerUp.' },
+      b3: { a: ['5', '5u', '5U'], err: 'the comment gives the settling time', hint: 'Read the comment on that line.' }
+    },
+    tlm: 'ADCS> sun sensor sampled · settle 5 ms · off between reads',
+    debrief: 'No sensor can forget to power down or skip the settle delay, because the order isn’t theirs to write. Put <code>run()</code> in a CRTP base and you get the compile-time version: the step calls become direct.'
+  },
+  {
+    id: 'bv', p: 'beh', kind: 'code', file: 'comms/downlink_priority.cpp', pattern: 'Visitor', page: 331,
+    title: 'Visitor: one operation, every packet type',
+    intent: 'Represent an operation to be performed on the elements of an object structure, so you can add new operations without changing the element classes.',
+    mission: 'The downlink queue holds three packet types. Give each a priority, and later add size estimation and logging, without editing the packet structs each time.',
+    brief: '<p>GoF’s Visitor uses double dispatch: each element has an <code>accept()</code> that calls back the right <code>visit()</code> overload. Since C++17 the standard library offers a vtable-free form for a closed set of types: <code>std::variant</code> plus <code>std::visit</code> ([variant.visit]). A missing overload for one type is a compile error.</p>',
+    refs: ['gofBeh', 'isoLib'],
+    code:
+`struct HkPacket    { uint16_t battMv; int16_t tempC; };
+struct ImagePacket { uint16_t frameId; uint32_t bytes; };
+struct EventPacket { uint8_t code; };
+
+using Packet = std::⟦b1⟧<HkPacket, ImagePacket, EventPacket>;
+
+struct PriorityVisitor {                          // GoF: Visitor
+    uint8_t operator()(const HkPacket&)    const { return 2; }
+    uint8_t operator()(const ImagePacket&) const { return 1; }
+    uint8_t operator()(const ⟦b2⟧&) const { return 3; }   // events first
+};
+
+uint8_t priorityOf(const Packet& p) {
+    return std::⟦b3⟧(PriorityVisitor{}, p);
+}`,
+    blanks: {
+      b1: { a: ['variant'], err: 'a closed set of alternative types is a std::variant', hint: 'C++17’s type-safe union.' },
+      b2: { a: ['EventPacket'], err: 'the third overload handles the remaining packet type', hint: 'Which packet type has no overload yet?' },
+      b3: { a: ['visit'], err: 'apply the visitor to whichever type the variant holds', hint: 'The std:: function that pairs with variant.' }
+    },
+    tlm: 'COMMS> queue sorted: events → housekeeping → images',
+    debrief: 'Size estimation is a new visitor struct; the packet structs don’t change. GoF’s trade-off still holds: adding a new <em>packet type</em> means updating every visitor, and with <code>std::visit</code> the compiler lists the ones you missed.'
+  }
+];
+
+/* ---------- State ---------- */
+const STORE_KEY = 'kestrel1-v1';
+let S = load() || fresh();
+let cur = S.cur || firstOpen();
+let level, startedAt, tick, attempts = 0, hinted = false, solved = false;
+
+function fresh() { return { done: {}, score: 0, streak: 0, cur: 'r1' }; }
+function load() { try { const v = JSON.parse(localStorage.getItem(STORE_KEY)); return v && v.done ? v : null; } catch (e) { return null; } }
+function save() { try { S.cur = cur; localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {} }
+function firstOpen() {
+  for (const p of PATTERNS) { const l = LEVELS.find(x => x.p === p.id && S.done[x.id] === undefined); if (l) return l.id; }
+  return 'r1';
+}
+
+const $ = s => document.querySelector(s);
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const norm = s => s.replace(/\s+/g, '');
+const mult = () => 1 + 0.5 * Math.min(S.streak, 4);
+
+function unlocked(l) {
+  const same = LEVELS.filter(x => x.p === l.p);
+  const i = same.indexOf(l);
+  return i === 0 || !!S.done[same[i - 1].id];
+}
+
+/* ---------- Syntax highlight ---------- */
+const KW = new Set('class struct public private protected template typename return if while for switch case break const constexpr static inline explicit virtual override delete void bool char auto enum this operator friend true false extern include using nullptr default noexcept float long int sizeof'.split(' '));
+const TY = new Set('uint8_t uint16_t uint32_t int32_t size_t std Mode Evt Gpio'.split(' '));
+function hl(text) {
+  const re = /(\/\/[^\n]*|\/\*.*?\*\/)|("(?:\\.|[^"\\])*"|<[a-z]+>(?=\s*\/\/))|\b(0x[0-9A-Fa-f]+|\d+)\b|([A-Za-z_]\w*)|(#\w+)/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(text))) {
+    out += esc(text.slice(last, m.index));
+    if (m[1]) out += '<span class="t-com">' + esc(m[1]) + '</span>';
+    else if (m[2]) out += '<span class="t-str">' + esc(m[2]) + '</span>';
+    else if (m[3]) out += '<span class="t-num">' + m[3] + '</span>';
+    else if (m[4]) out += KW.has(m[4]) ? '<span class="t-kw">' + m[4] + '</span>' : TY.has(m[4]) ? '<span class="t-ty">' + m[4] + '</span>' : m[4];
+    else if (m[5]) out += '<span class="t-kw">' + esc(m[5]) + '</span>';
+    last = re.lastIndex;
+  }
+  return out + esc(text.slice(last));
+}
+
+function renderCode(code, withBlanks) {
+  const lines = code.split('\n');
+  return lines.map((line, i) => {
+    const parts = line.split(/⟦(\w+)⟧/);
+    let html = '';
+    parts.forEach((p, j) => {
+      if (j % 2 === 0) html += hl(p);
+      else if (withBlanks) {
+        const b = level.blanks[p];
+        const w = Math.max(4, Math.max(...b.a.map(x => x.length), (b.show || '').length) + 1);
+        html += `<input class="blank" id="blank-${level.id}-${p}" data-b="${p}" data-line="${i + 1}" style="width:${w}ch" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Blank ${p} on line ${i + 1}">`;
+      }
+    });
+    return `<span class="ln" data-n="${i + 1}">${html || ' '}</span>`;
+  }).join('');
+}
+
+/* ---------- Rendering ---------- */
+function renderRail() {
+  $('#subsys').innerHTML = PATTERNS.map(p => {
+    const ls = LEVELS.filter(l => l.p === p.id);
+    const all = ls.every(l => S.done[l.id]);
+    const active = level && level.p === p.id;
+    const first = ls.find(l => !S.done[l.id]) || ls[0];
+    return `<div class="sub" role="group" aria-label="${p.name}" ${active ? 'aria-current="true"' : ''}>
+      <div class="top"><span class="name"><span class="status-lamp ${all ? 'on' : ''}"></span>${p.name}</span><span class="code">${p.code}</span></div>
+      <div class="what">${p.what}</div>
+      <div class="pips">${ls.map((l, i) => `<button class="pip ${S.done[l.id] !== undefined ? 'done' : ''} ${l.id === cur ? 'here' : ''}" data-go="${l.id}" ${unlocked(l) ? '' : 'disabled'} title="${esc(l.title.replace(/&[^;]+;/g, "'"))}" aria-label="${p.name} level ${i + 1}${S.done[l.id] !== undefined ? ', done' : ''}">${l.kind === 'mcq' ? '!' : i + 1}</button>`).join('')}</div>
+    </div>`;
+  }).join('');
+  $('#mScore').textContent = S.score.toLocaleString();
+  $('#mStreak').textContent = '×' + mult().toFixed(1);
+}
+
+function refChips(l) {
+  return `<div class="cites">${l.refs.map(id => {
+    const label = (l.page && id === GOF_REF[l.p]) ? `GoF ${l.pattern}, p. ${l.page}` : REFS[id].short;
+    return `<a class="cite" href="#ref-${id}" data-ref="${id}">${label}</a>`;
+  }).join('')}</div>`;
+}
+function examplesHtml(exs) {
+  return (exs || []).map(ex => `<div class="ide">
+      <div class="tab"><b>${ex.label}</b><span>${ex.tag}</span></div>
+      <div class="codewrap"><pre class="code">${renderCode(ex.code, false)}</pre></div>
+      <div class="exnote">${ex.note}</div>
+    </div>`).join('');
+}
+
+function renderLevel() {
+  level = LEVELS.find(l => l.id === cur);
+  attempts = 0; hinted = false; solved = S.done[level.id] !== undefined;
+  const pat = PATTERNS.find(p => p.id === level.p);
+  const ls = LEVELS.filter(l => l.p === level.p);
+  const idx = ls.indexOf(level) + 1;
+  const fsm = level.fsm ? `<div class="fsm">${level.fsm.map(([a, e, b]) => `<span>${a} <em>—${e}→</em> ${b}</span>`).join('')}</div>` : '';
+  const isIntro = idx === 1;
+
+  let body = `
+    <div>
+      <div class="eyebrow">${pat.name} · ${level.kind === 'mcq' ? 'Fault injection' : 'Work order ' + idx + ' of ' + ls.length}</div>
+      <h2>${level.title}</h2>
+    </div>
+    <p class="mission">${level.mission}</p>`;
+  const intent = level.intent ? `<h3>Intent · ${level.pattern} (GoF p. ${level.page}, paraphrased)</h3><p>${level.intent}</p>` : '';
+
+  if (level.kind === 'code') {
+    body += `
+    <div class="brief">
+      ${isIntro ? `<h3>${level.intent ? 'This subsystem' : 'The pattern'}</h3><p>${pat.blurb}</p>` : ''}
+      ${intent}
+      <h3>Brief</h3>${level.brief}${fsm}
+      <h3>Primary sources</h3>${refChips(level)}
+    </div>
+    <div class="ide">
+      <div class="tab"><b>${level.file}</b><span>${Object.keys(level.blanks).length} blanks · Tab to move</span></div>
+      <div class="codewrap"><pre class="code" id="code">${renderCode(level.code, true)}</pre></div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="btnBuild">Build &amp; flash</button>
+      <button class="secondary" id="btnHint">Hint (−50)</button>
+      <button class="secondary" id="btnReveal" hidden>Show answer (0 pts)</button>
+      <span class="kbd">Enter on the last blank builds</span>
+    </div>
+    <div class="log" id="log" aria-live="polite"><span class="cmd">$ ready.</span> Fill the amber blanks, then build.</div>
+    <div id="debrief"></div>`;
+  } else {
+    body += `
+    ${level.brief ? `<div class="brief"><h3>How the base finds its derived class</h3>${level.brief}</div>` : ''}
+    ${examplesHtml(level.examples)}
+    <div class="ide">
+      <div class="tab"><b>${level.file}</b><span>${level.examples ? 'the shipped code · read-only' : 'read-only'}</span></div>
+      <div class="codewrap"><pre class="code">${renderCode(level.code, false)}</pre></div>
+    </div>
+    <div class="mcq">
+      <p class="q">${level.q}</p>
+      ${level.options.map((o, i) => `<button class="opt" data-opt="${i}"><span class="k">${'ABCD'[i]}</span><span>${o.t}</span></button>`).join('')}
+    </div>
+    <div class="brief"><h3>Primary sources</h3>${refChips(level)}</div>
+    <div id="debrief"></div>`;
+  }
+  $('#order').innerHTML = body;
+
+  if (solved) showSolved();
+  else startWindow();
+  renderRail();
+  save();
+  const first = document.querySelector('input.blank');
+  if (first && !solved && window.matchMedia('(min-width: 861px)').matches) first.focus({ preventScroll: true });
+}
+
+function showSolved() {
+  stopWindow();
+  if (level.kind === 'code') {
+    for (const [id, b] of Object.entries(level.blanks)) {
+      const inp = $(`#blank-${level.id}-${id}`);
+      inp.value = b.show || b.a[0];
+      inp.classList.add('ok'); inp.readOnly = true;
+    }
+    $('#btnBuild').disabled = true; $('#btnHint').hidden = true;
+    $('#log').innerHTML = `<span class="ok">✓ flight build verified.</span>\n<span class="tlm">${level.tlm}</span>`;
+  } else {
+    document.querySelectorAll('.opt').forEach((b, i) => { b.disabled = true; if (level.options[i].ok) markOpt(b, i); });
+  }
+  showDebrief(S.done[level.id]);
+}
+
+function showDebrief(pts, breakdown) {
+  const nxt = nextLevel();
+  $('#debrief').innerHTML = `<div class="debrief">
+    <h3>Subsystem nominal</h3>
+    <p>${level.debrief}</p>
+    <div class="pts">${breakdown || (pts + ' pts banked')}</div>
+    <div class="actions">${nxt ? `<button class="primary" id="btnNext">Next: ${nxt.title}</button>` : ''}</div>
+  </div>`;
+  if (nxt) $('#btnNext').onclick = () => go(nxt.id);
+}
+
+function nextLevel() {
+  const ls = LEVELS.filter(l => l.p === level.p);
+  const i = ls.indexOf(level);
+  if (i < ls.length - 1) return ls[i + 1];
+  for (const p of PATTERNS) {
+    const l = LEVELS.find(x => x.p === p.id && S.done[x.id] === undefined && unlocked(x));
+    if (l) return l;
+  }
+  return null;
+}
+
+function go(id) {
+  cur = id; renderLevel();
+  const top = $('#order').getBoundingClientRect().top + window.scrollY - 12;
+  if (window.scrollY > top) window.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+
+/* ---------- Pass window ---------- */
+const WINDOW = 240;
+function bonus() { return Math.max(0, WINDOW - Math.floor((Date.now() - startedAt) / 1000) * 2); }
+function startWindow() {
+  stopWindow(); startedAt = Date.now(); updWindow();
+  tick = setInterval(updWindow, 1000);
+}
+function stopWindow() { clearInterval(tick); }
+function updWindow() {
+  const b = solved ? 0 : bonus();
+  $('#mWindow').textContent = '+' + b;
+  $('#mBar').style.width = (b / WINDOW * 100) + '%';
+}
+
+/* ---------- Build ---------- */
+let building = false;
+function build() {
+  if (building || solved) return;
+  building = true;
+  const log = $('#log');
+  const inputs = [...document.querySelectorAll('input.blank')];
+  document.querySelectorAll('.ln.err').forEach(n => n.classList.remove('err'));
+  const results = inputs.map(inp => {
+    const b = level.blanks[inp.dataset.b];
+    const ok = b.a.includes(norm(inp.value));
+    return { inp, b, ok };
+  });
+  const lines = [`<span class="cmd">$ arm-none-eabi-g++ -std=c++20 -Os -fno-exceptions -fno-rtti -c ${level.file}</span>`];
+  const bad = results.filter(r => !r.ok);
+  results.forEach(r => { r.inp.classList.remove('ok', 'bad'); });
+  void document.body.offsetWidth;
+  if (bad.length) {
+    attempts++;
+    S.streak = 0;
+    bad.forEach(r => {
+      r.inp.classList.add('bad');
+      const ln = r.inp.dataset.line;
+      document.querySelector(`.ln[data-n="${ln}"]`).classList.add('err');
+      lines.push(`<span class="bad">${level.file}:${ln}: error: ${r.inp.value.trim() ? `‘${esc(r.inp.value.trim())}’: ` : ''}${r.b.err}</span>`);
+    });
+    results.filter(r => r.ok).forEach(r => r.inp.classList.add('ok'));
+    lines.push(`<span class="bad">${bad.length} error${bad.length > 1 ? 's' : ''}. Flash aborted. Streak reset.</span>`);
+    if (attempts >= 3) $('#btnReveal').hidden = false;
+    typeLog(log, lines, () => { building = false; bad[0].inp.focus(); });
+    beep(180, .12); renderRail(); save();
+  } else {
+    results.forEach(r => { r.inp.classList.add('ok'); r.inp.readOnly = true; });
+    const base = 100 * results.length;
+    const win = bonus();
+    const m = attempts === 0 ? mult() : 1;
+    const pts = Math.max(0, Math.round((base + win) * m) - (hinted ? 50 : 0));
+    lines.push('<span class="ok">compiled · linked · flashing… verified ✓</span>', `<span class="tlm">${level.tlm}</span>`);
+    win_(pts, `${base} code + ${win} pass-window${m > 1 ? ` × ${m.toFixed(1)} streak` : ''}${hinted ? ' − 50 hint' : ''} = ${pts} pts`);
+    typeLog(log, lines, () => { building = false; });
+  }
+}
+
+function win_(pts, breakdown) {
+  solved = true; stopWindow(); updWindow();
+  if (attempts === 0 && !hinted) S.streak++; else S.streak = 0;
+  S.done[level.id] = pts; S.score += pts;
+  if (level.kind === 'code') { $('#btnBuild').disabled = true; $('#btnHint').hidden = true; $('#btnReveal').hidden = true; }
+  showDebrief(pts, breakdown);
+  toast('+' + pts);
+  beep(660, .08); setTimeout(() => beep(990, .12), 90);
+  renderRail(); save();
+  if (LEVELS.every(l => S.done[l.id] !== undefined)) setTimeout(finale, 1100);
+}
+
+function typeLog(el, lines, done) {
+  el.innerHTML = '';
+  const fast = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let i = 0;
+  (function step() {
+    if (i >= lines.length) { done && done(); return; }
+    el.innerHTML += (i ? '\n' : '') + lines[i++];
+    el.scrollTop = el.scrollHeight;
+    fast ? step() : setTimeout(step, 160);
+  })();
+}
+
+function hint() {
+  if (solved) return;
+  const lines = Object.entries(level.blanks).map(([id, b], i) => `<span class="hint">hint ${i + 1}: ${b.hint}</span>`);
+  if (!hinted) { hinted = true; }
+  $('#log').innerHTML = lines.join('\n');
+  $('#btnHint').textContent = 'Hint shown';
+}
+
+function reveal() {
+  for (const [id, b] of Object.entries(level.blanks)) {
+    const inp = $(`#blank-${level.id}-${id}`);
+    inp.value = b.show || b.a[0]; inp.classList.remove('bad'); inp.classList.add('ok'); inp.readOnly = true;
+  }
+  attempts = 99;
+  $('#log').innerHTML = `<span class="hint">Answer shown. Study it, then move on: 0 pts for this one.</span>\n<span class="tlm">${level.tlm}</span>`;
+  win_(0, 'Answer shown · 0 pts');
+}
+
+/* ---------- MCQ ---------- */
+function markOpt(btn, i) {
+  const o = level.options[i];
+  btn.classList.add(o.ok ? 'right' : 'wrong');
+  if (!btn.querySelector('.why')) btn.insertAdjacentHTML('beforeend', `<span class="why">${o.why}</span>`);
+}
+function pick(i) {
+  if (solved) return;
+  const btn = document.querySelector(`.opt[data-opt="${i}"]`);
+  if (btn.disabled) return;
+  btn.disabled = true;
+  markOpt(btn, i);
+  if (level.options[i].ok) {
+    document.querySelectorAll('.opt').forEach(b => b.disabled = true);
+    const base = attempts === 0 ? 200 : attempts === 1 ? 80 : 0;
+    const win = attempts === 0 ? bonus() : 0;
+    const m = attempts === 0 ? mult() : 1;
+    const pts = Math.round((base + win) * m);
+    win_(pts, attempts === 0 ? `200 diagnosis + ${win} pass-window${m > 1 ? ` × ${m.toFixed(1)} streak` : ''} = ${pts} pts` : `${pts} pts (diagnosed on attempt ${attempts + 1})`);
+  } else {
+    attempts++; S.streak = 0; beep(180, .12); renderRail(); save();
+  }
+}
+
+/* ---------- Shelf ---------- */
+function renderShelf() {
+  const cols = [...PATTERNS, { id: 'space', name: 'NASA & ESA' }];
+  $('#shelfgrid').innerHTML = cols.map(p => `<div class="shelfcol"><h3>${p.name}</h3>${
+    Object.entries(REFS).filter(([, r]) => r.p === p.id).map(([id, r]) => `<div class="ref" id="ref-${id}">
+      <div class="who">${r.who}</div>
+      <div class="where">${r.where}</div>
+      <div class="role">${r.role}</div>
+      ${r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${r.urlLabel}</a>` : ''}
+    </div>`).join('')}</div>`).join('');
+}
+
+/* ---------- Finale ---------- */
+function rank(s) { const a = s / LEVELS.length; return a < 210 ? 'Bench intern' : a < 420 ? 'Firmware engineer' : a < 660 ? 'Flight software lead' : 'Mission architect'; }
+function finale() {
+  $('#fScore').textContent = S.score.toLocaleString() + ' pts';
+  $('#fRank').textContent = rank(S.score);
+  $('#fNote').textContent = S.score / LEVELS.length >= 660 ? 'Clean builds, fast passes, long streaks. Ship it.' : 'Fly it again to chase a longer streak and a higher rank.';
+  $('#finale').hidden = false; $('#fClose').focus();
+}
+
+/* ---------- Toast & sound ---------- */
+let toastT;
+function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 1400); }
+let actx;
+function beep(f, d) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'square'; o.frequency.value = f; g.gain.value = .03;
+    o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + d);
+  } catch (e) {}
+}
+
+/* ---------- Orbit scope ---------- */
+const cv = $('#orbit'), cx = cv.getContext('2d');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let t0 = performance.now();
+function doneCount(p) { return LEVELS.filter(l => l.p === p && S.done[l.id] !== undefined).length; }
+function currentMode() {
+  const order = ['s4', 's3', 's2', 's1'];
+  for (const id of order) if (S.done[id] !== undefined) return LEVELS.find(l => l.id === id).mode;
+  return doneCount('raii') ? 'SAFE' : 'BOOT';
+}
+function draw(now) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.clearRect(0, 0, w, h);
+  const t = (now - t0) / 1000;
+  // stars
+  cx.fillStyle = css('--line');
+  for (let i = 0; i < 40; i++) { const x = (i * 97.3) % w, y = (i * 53.7) % h; cx.fillRect(x, y, 1.5, 1.5); }
+  // earth
+  const ex = w / 2, ey = h + h * 0.55, er = h * 0.95;
+  const g = cx.createRadialGradient(ex, ey - er * .3, er * .2, ex, ey, er);
+  g.addColorStop(0, '#2d5d8a'); g.addColorStop(1, '#16304d');
+  cx.fillStyle = g; cx.beginPath(); cx.arc(ex, ey, er, 0, Math.PI * 2); cx.fill();
+  cx.strokeStyle = css('--cyan'); cx.globalAlpha = .35; cx.lineWidth = 3; cx.stroke(); cx.globalAlpha = 1;
+  // orbit
+  const or = er + h * 0.42;
+  cx.setLineDash([3, 6]); cx.strokeStyle = css('--line'); cx.lineWidth = 1;
+  cx.beginPath(); cx.arc(ex, ey, or, Math.PI * 1.1, Math.PI * 1.9); cx.stroke(); cx.setLineDash([]);
+  // sat
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const a = Math.PI * 1.5 + (reduce ? 0 : Math.sin(t * 0.25) * 0.32);
+  const sx = ex + Math.cos(a) * or, sy = ey + Math.sin(a) * or;
+  cx.save(); cx.translate(sx, sy); cx.rotate(a + Math.PI / 2);
+  const r = doneCount('raii'), c = doneCount('crtp'), st = doneCount('state');
+  // solar panels (RAII / EPS)
+  const pw = 8 + r * 7;
+  cx.fillStyle = r ? '#3a6fc4' : css('--line');
+  cx.fillRect(-11 - pw, -5, pw, 10); cx.fillRect(11, -5, pw, 10);
+  cx.strokeStyle = css('--dim'); cx.lineWidth = .6;
+  for (let i = 1; i <= r; i++) { cx.beginPath(); cx.moveTo(-11 - i * 7, -5); cx.lineTo(-11 - i * 7, 5); cx.moveTo(11 + i * 7, -5); cx.lineTo(11 + i * 7, 5); cx.stroke(); }
+  // body
+  cx.fillStyle = css('--panel-2'); cx.strokeStyle = css('--ink'); cx.lineWidth = 1.2;
+  cx.fillRect(-10, -10, 20, 20); cx.strokeRect(-10, -10, 20, 20);
+  // antenna (CRTP / HAL)
+  if (c) {
+    cx.strokeStyle = css('--ink'); cx.beginPath(); cx.moveTo(0, 10); cx.lineTo(0, 10 + 6 + c * 3); cx.stroke();
+    if (!reduce) {
+      cx.strokeStyle = css('--cyan');
+      for (let k = 0; k < c; k++) {
+        const ph = ((t * 0.8 + k / c) % 1);
+        cx.globalAlpha = 1 - ph; cx.beginPath(); cx.arc(0, 10 + 6 + c * 3, 6 + ph * 40, Math.PI * .25, Math.PI * .75); cx.stroke();
+      }
+      cx.globalAlpha = 1;
+    }
+  }
+  const cr = doneCount('cre'), sr = doneCount('str'), bh = doneCount('beh'), dj = doneCount('di');
+  // magnetometer boom (Creational)
+  if (cr) { cx.strokeStyle = css('--dim'); cx.beginPath(); cx.moveTo(-10, -10); cx.lineTo(-10 - cr * 4, -10 - cr * 4); cx.stroke(); cx.fillStyle = css('--ink'); cx.fillRect(-12 - cr * 4, -12 - cr * 4, 4, 4); }
+  // payload camera (Structural)
+  if (sr) { cx.fillStyle = css('--panel-2'); cx.strokeStyle = css('--ink'); cx.fillRect(-5, -13 - sr, 10, 3 + sr); cx.strokeRect(-5, -13 - sr, 10, 3 + sr); cx.fillStyle = css('--cyan'); cx.beginPath(); cx.arc(0, -13 - sr, 2.5, 0, Math.PI * 2); cx.fill(); }
+  // star tracker baffle (Behavioral)
+  if (bh) { cx.strokeStyle = css('--amber'); cx.lineWidth = 1.5; cx.beginPath(); cx.moveTo(8, -10); cx.lineTo(10 + bh, -14 - bh); cx.stroke(); cx.lineWidth = 1; }
+  // test-port lamp (DI)
+  if (dj) { cx.fillStyle = dj === 3 ? css('--ok') : css('--amber'); cx.fillRect(4, 5, 4, 3); }
+  // mode lamp (STATE / ADCS)
+  const mode = currentMode();
+  cx.fillStyle = mode === 'NOMINAL' ? css('--ok') : mode === 'DETUMBLE' ? css('--amber') : mode === 'SAFE' ? css('--bad') : css('--line');
+  cx.beginPath(); cx.arc(0, 0, 3.2 + (st && !reduce ? Math.sin(t * 4) * .8 : 0), 0, Math.PI * 2); cx.fill();
+  cx.restore();
+  $('#capMode').textContent = mode;
+  if (!reduce) requestAnimationFrame(draw);
+}
+
+/* ---------- Events ---------- */
+document.addEventListener('click', e => {
+  const go_ = e.target.closest('[data-go]'); if (go_ && !go_.disabled) { go(go_.dataset.go); return; }
+  const opt = e.target.closest('[data-opt]'); if (opt) { pick(+opt.dataset.opt); return; }
+  const ref = e.target.closest('[data-ref]');
+  if (ref) {
+    e.preventDefault();
+    const el = $('#ref-' + ref.dataset.ref);
+    el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600);
+    return;
+  }
+  if (e.target.id === 'btnBuild') build();
+  if (e.target.id === 'btnHint') hint();
+  if (e.target.id === 'btnReveal') reveal();
+});
+document.addEventListener('keydown', e => {
+  if (e.target.matches && e.target.matches('input.blank') && e.key === 'Enter') {
+    e.preventDefault();
+    const all = [...document.querySelectorAll('input.blank')];
+    const i = all.indexOf(e.target);
+    const nextEmpty = all.slice(i + 1).find(x => !x.readOnly);
+    if (nextEmpty && !nextEmpty.value) nextEmpty.focus(); else build();
+  }
+});
+$('#btnShelf').onclick = () => $('#shelf').scrollIntoView({ behavior: 'smooth' });
+$('#btnReset').onclick = () => { $('#resetConfirm').hidden = false; };
+$('#resetNo').onclick = () => { $('#resetConfirm').hidden = true; };
+$('#resetYes').onclick = () => { S = fresh(); cur = 'r1'; $('#resetConfirm').hidden = true; save(); renderLevel(); if (matchMedia('(prefers-reduced-motion: reduce)').matches) draw(performance.now()); };
+$('#fClose').onclick = () => { $('#finale').hidden = true; };
+$('#fReplay').onclick = () => { $('#finale').hidden = true; S = fresh(); cur = 'r1'; save(); renderLevel(); };
+
+renderShelf();
+renderLevel();
+requestAnimationFrame(draw);
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  const _r = renderRail; renderRail = function () { _r(); requestAnimationFrame(draw); };
+}
+</script>
+
+</body>
+</html>
