@@ -6,9 +6,7 @@ Every pattern is taught from primary sources: the people who named each techniqu
 
 ## Play
 
-Open `index.html` in any modern browser. It is a single self-contained file with no build step. It loads fonts from Google Fonts and falls back to system fonts offline. Progress is saved in your browser's local storage.
-
-To publish it with GitHub Pages: **Settings → Pages → Build and deployment → Deploy from a branch**, then choose `main` and `/ (root)`. The game will be served at `https://<your-user>.github.io/<repo-name>/`.
+Open https://mbardwell.github.io/kestral/ or `index.html` in any modern browser. Progress is saved in your browser's local storage.
 
 ## What it covers
 
